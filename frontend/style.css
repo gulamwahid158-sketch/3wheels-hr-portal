@@ -180,6 +180,38 @@ h1,h2,h3,label,button,.badge{text-transform:capitalize}
 .login-panel .login-brand{display:none}
 .login .row{grid-template-columns:1fr}
 
+/* ---- Home page ---- */
+:root{--accent:#f08a76}
+.home2{max-width:1020px;margin:0 auto}
+.greet{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-bottom:22px}
+.greet-text h1{margin:0 0 10px;font-size:clamp(26px,3vw,34px);font-weight:600;letter-spacing:-.01em;text-transform:none}
+.greet-text p{margin:0;font-size:17px;line-height:1.6;color:var(--mute);max-width:520px}
+.greet-art{flex:0 0 auto;width:min(380px,42%);color:var(--ink);opacity:.9}
+.greet-art svg{width:100%;height:auto;display:block}
+.h-cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;align-items:start}
+.h-col{display:flex;flex-direction:column;gap:24px;min-width:0}
+.h-card{margin:0;padding:20px 22px;border-radius:12px}
+.h-card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.h-card h2{margin:0;font-size:16px;font-weight:600;text-transform:none}
+.h-arrow{font-size:20px;line-height:1;text-decoration:none;color:var(--ink)}
+.h-empty{display:flex;flex-direction:column;align-items:center;text-align:center;gap:8px;padding:6px 0 10px}
+.h-empty p{margin:0;color:var(--mute);font-size:15px}
+.h-art{width:130px;color:var(--ink)}
+.h-art svg{width:100%;height:auto;display:block}
+.h-note{display:flex;gap:14px;align-items:flex-start}
+.h-note p{margin:0 0 6px;color:var(--mute)}
+.h-ico{width:44px;flex:none;color:var(--ink)}
+.h-row{margin:0 0 8px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.h-hol{padding:8px 0;border-bottom:1px solid var(--line)}
+.h-hol:last-child{border-bottom:0}
+.h-hol b{font-size:17px}
+.qa{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:stretch}
+.qa-links a{display:block;padding:8px 0;color:var(--ink);text-decoration:none}
+.qa-links a:hover{color:var(--brand)}
+.qa-note{background:color-mix(in srgb,var(--accent) 12%,var(--card));border-radius:10px;padding:12px;font-size:12px;line-height:1.6;color:var(--mute)}
+.h-btn{margin-top:10px;text-transform:none}
+@media(max-width:800px){.h-cols{grid-template-columns:1fr}.greet-art{display:none}}
+
 /* ---- Custom dropdown (long grouped lists, always opens below) ---- */
 .ddl{position:relative}
 .ddl-btn{width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 11px;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--ink);font:inherit;text-align:left;text-transform:none;cursor:pointer;transition:border-color .15s,box-shadow .15s}

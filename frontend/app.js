@@ -126,19 +126,87 @@ function enhanceSelect(sel) {
 
 // ---------------- pages ----------------
 const P = {};
+// Small line drawings for the Home page (drawn for this portal; they follow the theme colours)
+const ART = {
+  hero: `<svg viewBox="0 0 460 210" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <circle cx="340" cy="66" r="26" fill="var(--accent)" stroke="none" opacity=".9"/>
+    <path d="M340 24v-8M372 36l6-6M308 36l-6-6M388 66h8M284 66h-8"/>
+    <path d="M8 178h444"/>
+    <path d="M18 178c42-48 84-52 124-22s92 12 132-26 112-14 178 48" opacity=".55"/>
+    <path d="M60 196c90-8 250-8 340 0" opacity=".35"/>
+    <g transform="translate(170 108)">
+      <path d="M12 58V34c0-8 6-14 14-14h46l22 16h12v22" fill="var(--card)"/>
+      <path d="M26 20h46l6 8H26z" fill="var(--accent)" fill-opacity=".55"/>
+      <path d="M30 30h34l14 10H30z"/>
+      <circle cx="34" cy="62" r="10" fill="var(--card)"/><circle cx="106" cy="62" r="10" fill="var(--card)"/>
+      <path d="M34 62h.01M106 62h.01"/>
+    </g>
+  </svg>`,
+  review: `<svg viewBox="0 0 90 90" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <rect x="22" y="14" width="46" height="62" rx="5"/><rect x="34" y="8" width="22" height="12" rx="3" fill="var(--accent)"/>
+    <path d="M32 36h5M43 36h17M32 48h5M43 48h17M32 60h5M43 60h12"/></svg>`,
+  payslip: `<svg viewBox="0 0 120 100" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <rect x="28" y="8" width="50" height="70" rx="5"/><path d="M38 22h30M38 34h30M38 46h16"/>
+    <circle cx="76" cy="66" r="19" fill="var(--accent)" fill-opacity=".25"/><path d="M90 80l16 14"/>
+    <text x="76" y="73" text-anchor="middle" font-size="19" font-weight="700" fill="currentColor" stroke="none">₹</text></svg>`,
+  track: `<svg viewBox="0 0 140 70" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M10 54h120"/><circle cx="32" cy="54" r="8" fill="var(--accent)"/><circle cx="68" cy="54" r="8" fill="var(--accent)"/>
+    <path d="M104 54V14l24 9-24 9" fill="var(--accent)" fill-opacity=".45"/></svg>`,
+  doc: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <rect x="10" y="6" width="28" height="36" rx="4" fill="var(--accent)" fill-opacity=".2"/><path d="M17 16h14M17 24h14M17 32h8"/></svg>`,
+};
+const HOME_QUOTES = [
+  "Small steps every day add up to big results.",
+  "Well begun is half done. Make today count.",
+  "Great teams are built one good day at a time.",
+  "Focus on progress, not perfection.",
+  "A calm start makes for a productive day.",
+  "Do the next right thing, and then the one after.",
+  "Your effort today is tomorrow's result.",
+  "Good work is quiet work. Keep going.",
+];
 P.home = async el => {
   const h = await api("home");
-  el.innerHTML = `<div class="home-hero"><h1>Hi ${esc(ME.name.split(" ")[0])} 👋</h1><p class="mute">Here's your day at a glance.</p></div>
-  <div class="grid">
-   <div class="card home-card accent-teal"><h2>🌿 Leave balance</h2>${h.balances.filter(b => b.code !== "LOP").map(b => `<p><span class="stat">${b.balance}</span> <span class="mute">${esc(b.name)} · ${b.consumed} of ${b.granted} used</span></p>`).join("")}<a href="#/leave-apply">Apply Leave →</a></div>
-   <div class="card home-card accent-blue"><h2>📅 Upcoming holidays</h2>${h.holidays.map(x => `<p><b>${fdate(x.date)}</b> ${esc(x.name)} ${x.restricted ? '<span class="badge">optional</span>' : ""}</p>`).join("") || '<p class="mute">None</p>'}</div>
-   <div class="card home-card accent-amber"><h2>✅ Review</h2>${h.pending_reviews ? `<p><span class="stat">${h.pending_reviews}</span> waiting for you</p><a href="#/review">Open →</a>` : '<p class="mute">Hurrah! Nothing to review.</p>'}</div>
-   <div class="card home-card accent-green"><h2>💰 Latest payslip</h2><button class="btn" id="reqPayslip">Request Payslip</button></div>
-   <div class="card home-card accent-purple"><h2>📝 My tasks</h2>${h.tasks.map(t => `<p>• ${esc(t.title)} <span class="mute">${fdate(t.due_date)}</span></p>`).join("") || '<p class="mute">All clear.</p>'}</div>
-   <div class="card home-card accent-rose"><h2>📌 Track</h2>${h.tracking.map(t => `<p>${esc(t.kind)} ${badge(t.status)}</p>`).join("") || '<p class="mute">Nothing new.</p>'}</div>
-  </div>
-  ${h.birthdays.length ? `<div class="card home-bday">🎂 Birthday today: ${h.birthdays.map(b => esc(b.name)).join(", ")}</div>` : ""}`;
-  $("#reqPayslip").onclick = () => { location.hash = "#/payslips"; render(); };
+  const hour = new Date().getHours();
+  const greet = hour < 12 ? "Good Morning" : hour < 17 ? "Good Afternoon" : "Good Evening";
+  const quote = HOME_QUOTES[Math.floor(Date.now() / 86400000) % HOME_QUOTES.length];
+  const first = esc(ME.name.split(" ")[0]);
+  const card = (title, body, link) => `<section class="card h-card"><div class="h-card-head"><h2>${title}</h2>${link ? `<a class="h-arrow" href="${link}" aria-label="Open ${esc(title)}">→</a>` : ""}</div>${body}</section>`;
+  const empty = (art, msg) => `<div class="h-empty"><div class="h-art">${art}</div><p>${msg}</p></div>`;
+  const note = (art, msg, link, label) => `<div class="h-note"><div class="h-ico">${art}</div><div><p>${msg}</p><a href="${link}">${label} →</a></div></div>`;
+  const dayMonth = d => new Date(d + "T00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+  const weekday = d => new Date(d + "T00:00").toLocaleDateString("en-IN", { weekday: "long" });
+  const left = [
+    card("Review", h.pending_reviews
+      ? `<div class="h-empty"><div class="stat">${h.pending_reviews}</div><p>waiting for you</p><a href="#/review">Open Review →</a></div>`
+      : empty(ART.review, "Hurrah! You've nothing to review.")),
+    card("Quick Access", `<div class="qa"><div class="qa-links">
+        <a href="#/payslips">Payslips</a><a href="#/it-statement">IT Statement</a><a href="#/ytd">YTD Reports</a><a href="#/reimbursement">Reimbursement</a><a href="#/loans">Loan Statement</a></div>
+        <div class="qa-note">Use quick access to view important salary details.</div></div>`),
+    card("IT Declaration", note(ART.doc, "Submit your Income Tax (IT) declaration.", "#/it-declaration", "Declare now")),
+    card("Track", h.tracking.length
+      ? h.tracking.map(t => `<p class="h-row">${esc(titleCase(t.kind))} ${badge(t.status)}</p>`).join("")
+      : empty(ART.track, "All good! You've nothing new to track.")),
+    card("My Tasks", h.tasks.length
+      ? h.tasks.map(t => `<p class="h-row">${esc(t.title)} <span class="mute">${fdate(t.due_date)}</span></p>`).join("")
+      : `<p class="mute">All clear.</p>`, "#/tasks"),
+  ];
+  const right = [
+    card("Upcoming Holidays", h.holidays.length
+      ? h.holidays.map(x => `<div class="h-hol"><b>${dayMonth(x.date)}</b> <span class="mute">${weekday(x.date)}</span><div class="mute">${esc(x.name)}${x.restricted ? ' <span class="badge">optional</span>' : ""}</div></div>`).join("")
+      : `<p class="mute">No upcoming holidays.</p>`, "#/holidays"),
+    card("Leave Balance", `${h.balances.filter(b => b.code !== "LOP").map(b => `<p class="h-row"><span class="stat">${b.balance}</span> <span class="mute">${esc(b.name)} · ${b.consumed} of ${b.granted} used</span></p>`).join("")}<a href="#/leave-apply">Apply Leave →</a>`),
+    card("Payslip", `${h.payslip
+      ? `<p class="h-row"><b>${esc(h.payslip.month)}</b> <span class="mute">Net pay</span> <b>${inr(h.payslip.net)}</b></p>`
+      : empty(ART.payslip, "Uh oh! Your payslip will show up here after the release of payroll.")}<button class="btn h-btn" type="button" data-go="#/payslips">Request Payslip</button>`),
+    card("POI", note(ART.doc, "Submit your Proof of Investments (POI).", "#/poi", "Submit proof")),
+  ];
+  el.innerHTML = `<div class="home2">
+    <div class="greet"><div class="greet-text"><h1>${greet}, ${first}</h1><p>${esc(quote)}</p></div><div class="greet-art">${ART.hero}</div></div>
+    ${h.birthdays.length ? `<div class="card home-bday">🎂 Birthday today: ${h.birthdays.map(b => esc(b.name)).join(", ")}</div>` : ""}
+    <div class="h-cols"><div class="h-col">${left.join("")}</div><div class="h-col">${right.join("")}</div></div>
+  </div>`;
+  el.querySelectorAll("[data-go]").forEach(b => b.onclick = () => { location.hash = b.dataset.go; });
 };
 
 P.engage = async el => {
