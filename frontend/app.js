@@ -1389,9 +1389,43 @@ async function refreshMe() { try { ME = await api("me"); const b = $("#bellcount
 function render() {
   const app = $("#app");
   if (!ME) {
-    app.innerHTML = `${themeBtn("theme-float")}<div class="login card"><div class="login-brand"><img src="assets/logo.png" alt="3Wheels AI"></div><h1>3Wheels AI</h1><p class="mute">Sign in to your 3Wheels AI workspace</p>${form("lg", [{ n: "email", label: "Email", type: "email", placeholder: "name@3wheels.ai" }, { n: "password", label: "Password", type: "password" }], "Sign in")}</div>`;
+    app.innerHTML = `${themeBtn("theme-float")}<div class="login-wrap">
+      <section class="login-hero" aria-hidden="true">
+        <div class="hero-brand"><span class="hero-logo"><img src="assets/logo.png" alt=""></span>3Wheels AI</div>
+        <div class="hero-copy">
+          <h2>Your people, payroll and time, in one place.</h2>
+          <p>The 3Wheels AI workspace for leave, attendance, payslips and approvals.</p>
+          <ul class="hero-feats">
+            <li><span class="fi">🌿</span><div><b>Leave and attendance</b><span>Apply, track balances and regularise in a few clicks.</span></div></li>
+            <li><span class="fi">💰</span><div><b>Payslips and salary</b><span>Request payslips and see your year to date reports.</span></div></li>
+            <li><span class="fi">✅</span><div><b>Quick approvals</b><span>Managers and HR review requests as they arrive.</span></div></li>
+          </ul>
+        </div>
+        <div class="hero-foot">© ${new Date().getFullYear()} 3Wheels AI · Secure employee workspace</div>
+      </section>
+      <section class="login-panel">
+        <div class="login card">
+          <div class="login-brand"><img src="assets/logo.png" alt="3Wheels AI"></div>
+          <h1>Welcome back</h1>
+          <p class="mute login-sub">Sign in to your 3Wheels AI workspace</p>
+          ${form("lg", [{ n: "email", label: "Work email", type: "email", placeholder: "name@3wheels.ai" }, { n: "password", label: "Password", type: "password", placeholder: "Enter your password" }], "Sign in")}
+          <p class="login-help mute">Trouble signing in? Contact your HR team.</p>
+        </div>
+      </section>
+    </div>`;
     bindTheme();
-    $("#lg").onsubmit = async e => { e.preventDefault(); try { await api("login", "POST", Object.fromEntries(new FormData(e.target))); await refreshMe(); location.hash = ["ceo", "coo", "cpo"].includes(ME.role) ? "#/executive" : "#/home"; render(); } catch (er) { $("#lg-err").textContent = er.message; } };
+    const em = $("#lg-email"), pw = $("#lg-password");
+    em.autocomplete = "username"; pw.autocomplete = "current-password"; em.focus();
+    const tg = document.createElement("button");
+    tg.type = "button"; tg.className = "pw-toggle"; tg.textContent = "Show"; tg.setAttribute("aria-label", "Show password");
+    pw.parentElement.classList.add("pw-wrap"); pw.parentElement.appendChild(tg);
+    tg.onclick = () => { const show = pw.type === "password"; pw.type = show ? "text" : "password"; tg.textContent = show ? "Hide" : "Show"; tg.setAttribute("aria-label", show ? "Hide password" : "Show password"); };
+    $("#lg").onsubmit = async e => {
+      e.preventDefault(); $("#lg-err").textContent = "";
+      const btn = e.target.querySelector("button.btn"); btn.disabled = true; btn.textContent = "Signing in…";
+      try { await api("login", "POST", Object.fromEntries(new FormData(e.target))); await refreshMe(); location.hash = ["ceo", "coo", "cpo"].includes(ME.role) ? "#/executive" : "#/home"; render(); }
+      catch (er) { $("#lg-err").textContent = er.message; btn.disabled = false; btn.textContent = "Sign in"; }
+    };
     return;
   }
   const route = (location.hash.replace("#/", "") || (["ceo", "coo", "cpo"].includes(ME.role) ? "executive" : "home"));

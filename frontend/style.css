@@ -156,3 +156,46 @@ h1,h2,h3,label,button,.badge{text-transform:capitalize}
 .badge.ceo,.badge.coo,.badge.cpo{text-transform:uppercase}
 .sub{max-height:0;overflow:hidden;opacity:0;transition:max-height .35s ease,opacity .25s ease;margin-left:20px;border-left:1px solid var(--line);padding-left:6px}
 .sub.open{max-height:500px;opacity:1;padding-top:4px;padding-bottom:4px}
+
+/* ---- Login page ---- */
+.login-wrap{min-height:100vh;display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr)}
+.login-hero{position:relative;overflow:hidden;color:#fff;background:linear-gradient(140deg,#0b3f3b 0%,#0f766e 48%,#2563eb 100%);padding:44px clamp(28px,5vw,72px);display:flex;flex-direction:column;justify-content:space-between;gap:32px}
+.login-hero::before,.login-hero::after{content:"";position:absolute;border-radius:50%;background:#fff;opacity:.07;pointer-events:none}
+.login-hero::before{width:420px;height:420px;right:-140px;top:-120px}
+.login-hero::after{width:300px;height:300px;left:-110px;bottom:-110px}
+.login-hero>*{position:relative;z-index:1}
+.hero-brand{display:flex;align-items:center;gap:12px;font-size:20px;font-weight:800;letter-spacing:-.02em}
+.hero-logo{width:42px;height:42px;border-radius:12px;background:#fff;display:grid;place-items:center;box-shadow:0 6px 18px rgba(0,0,0,.2)}
+.hero-logo img{width:28px;height:28px;object-fit:contain}
+.login-hero .hero-copy h2{margin:0 0 14px;font-size:clamp(28px,3.2vw,42px);line-height:1.12;font-weight:800;letter-spacing:-.025em;text-transform:none;max-width:520px}
+.hero-copy>p{margin:0;font-size:16px;line-height:1.6;opacity:.88;max-width:470px}
+.hero-feats{list-style:none;margin:30px 0 0;padding:0;display:grid;gap:16px;max-width:480px}
+.hero-feats li{display:flex;gap:14px;align-items:flex-start}
+.hero-feats .fi{width:40px;height:40px;border-radius:12px;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.22);display:grid;place-items:center;font-size:18px;flex:none}
+.hero-feats b{display:block;font-size:15px}
+.hero-feats div>span{display:block;font-size:13px;opacity:.8;line-height:1.5}
+.hero-foot{font-size:12px;opacity:.7}
+.login-panel{display:flex;align-items:center;justify-content:center;padding:32px 20px}
+.login-panel .login{margin:0 auto;max-width:410px;padding:34px 32px 26px;border-radius:20px;animation:loginrise .45s ease both}
+.login-panel .login-brand{display:none}
+.login .login-sub{margin:0 0 10px}
+.login h1{font-size:28px;font-weight:800;letter-spacing:-.02em}
+.login h1,.login button.btn,.login label{text-transform:none}
+.login input{padding:11px 13px;font-size:15px}
+.login button.btn[type=submit],.login form>button.btn{width:100%;padding:12px 18px;font-size:15px;margin-top:6px}
+.login button.btn:disabled{opacity:.7;cursor:progress;transform:none}
+.pw-wrap{position:relative}
+.pw-wrap input{padding-right:62px}
+.pw-toggle{position:absolute;right:6px;bottom:5px;background:none;border:0;color:var(--brand);font:inherit;font-size:12px;font-weight:700;padding:6px 8px;border-radius:7px;cursor:pointer}
+.pw-toggle:hover{background:var(--bg)}
+.login-help{margin:18px 0 0;font-size:12px;text-align:center}
+.theme-float{z-index:5}
+@keyframes loginrise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.login-panel .login{animation:none}}
+@media(max-width:900px){
+  .login-wrap{grid-template-columns:1fr}
+  .login-hero{display:none}
+  .login-panel{min-height:100vh;padding:72px 16px 32px;align-items:flex-start}
+  .login-panel .login{margin-top:2vh;max-width:430px;padding:28px 22px 22px}
+  .login-panel .login-brand{display:flex;margin-bottom:10px}
+}
