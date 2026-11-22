@@ -721,14 +721,47 @@ P["request-hub"] = async el => {
 
 // ---------------- shell ----------------
 // Sidebar mirrors the original: leaf items and collapsible groups. [route,label,icon] or [label,icon,[children]]
-const NAV = [["home", "Home", "⌂"], ["engage", "Engage", "◉"],
-  ["My Worklife", "▦", [["kudos", "Kudos"], ["feedback", "Feedback"]]],
-  ["To do", "☑", [["tasks", "Tasks"], ["review", "Review"]]],
-  ["Salary", "₹", [["payslips", "Payslips"], ["ytd", "YTD Reports"], ["it-statement", "IT Statement"], ["it-declaration", "IT Declaration"], ["loans", "Loans and Advances"], ["reimbursement", "Reimbursement"], ["poi", "Proof Of Investment"], ["salary-revision", "Salary Revision"]]],
-  ["Leave", "▣", [["leave-apply", "Leave Apply"], ["leave-balances", "Leave Balances"], ["leave-calendar", "Leave Calendar"], ["holidays", "Holiday Calendar"]]],
-  ["Attendance", "✓", [["attendance", "Attendance Info"], ["regularization", "Regularization & Permission"]]],
-  ["documents", "Document Center", "▭"], ["people", "People", "☺"], ["helpdesk", "Helpdesk", "ⓘ"], ["request-hub", "Request Hub", "≋"], ["delegates", "Workflow Delegates", "⇄"]];
+const NAV = [["home", "Home", "home"], ["engage", "Engage", "engage"],
+  ["My Worklife", "worklife", [["kudos", "Kudos"], ["feedback", "Feedback"]]],
+  ["To do", "todo", [["tasks", "Tasks"], ["review", "Review"]]],
+  ["Salary", "salary", [["payslips", "Payslips"], ["ytd", "YTD Reports"], ["it-statement", "IT Statement"], ["it-declaration", "IT Declaration"], ["loans", "Loans and Advances"], ["reimbursement", "Reimbursement"], ["poi", "Proof Of Investment"], ["salary-revision", "Salary Revision"]]],
+  ["Leave", "leave", [["leave-apply", "Leave Apply"], ["leave-balances", "Leave Balances"], ["leave-calendar", "Leave Calendar"], ["holidays", "Holiday Calendar"]]],
+  ["Attendance", "attendance", [["attendance", "Attendance Info"], ["regularization", "Regularization & Permission"]]],
+  ["documents", "Document Center", "docs"], ["people", "People", "people"], ["helpdesk", "Helpdesk", "help"], ["request-hub", "Request Hub", "hub"], ["delegates", "Workflow Delegates", "deleg"]];
 const openGroups = new Set();
+
+// Thin line icons (24x24) for the sidebar and header
+const ICONS = {
+  home: '<path d="M4 11l8-7 8 7v9a1 1 0 0 1-1 1h-4v-6h-6v6H5a1 1 0 0 1-1-1z"/>',
+  engage: '<circle cx="12" cy="12" r="2"/><path d="M7.8 7.8a5.9 5.9 0 0 0 0 8.4M16.2 7.8a5.9 5.9 0 0 1 0 8.4M5 5a9.9 9.9 0 0 0 0 14M19 5a9.9 9.9 0 0 1 0 14"/>',
+  worklife: '<rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/>',
+  todo: '<rect x="5" y="5" width="14" height="16" rx="2"/><path d="M9 5V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1M9 12h6M9 16h4"/>',
+  salary: '<path d="M3 15c3 1 5 2 8 2h3a2 2 0 0 0 0-4h-3"/><path d="M3 12l5-1 4 1M12 13l5-2 4 2-6 6-8-1"/><circle cx="15" cy="6" r="2.5"/>',
+  leave: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>',
+  attendance: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 12l3 3 5-6"/>',
+  docs: '<path d="M6 4h11a1 1 0 0 1 1 1v15H7a1 1 0 0 1-1-1z"/><path d="M6 19a1 1 0 0 1 1-1h11"/>',
+  people: '<circle cx="9" cy="9" r="3.2"/><path d="M3.5 19c.5-3.2 2.8-5 5.5-5s5 1.8 5.5 5"/><path d="M16 6.5a3 3 0 0 1 0 5.5M18.5 14.5c1.7.6 2.6 2 3 4.5"/>',
+  help: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8h.01"/>',
+  hub: '<path d="M12 4l9 5-9 5-9-5z"/><path d="M3 14l9 5 9-5"/>',
+  deleg: '<circle cx="7" cy="6" r="2"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="12" r="2"/><path d="M7 8v8M9 12h6"/>',
+  suite: '<path d="M3 10l9-6 9 6zM5 10v9M9.5 10v9M14.5 10v9M19 10v9M3 20h18"/>',
+  admin: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/>',
+  accounts: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 10h16M8 15h3"/>',
+  bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
+  power: '<path d="M12 3v8"/><path d="M7 6.3a7.5 7.5 0 1 0 10 0"/>',
+  chev: '<path d="M6 9l6 6 6-6"/>',
+};
+const icon = (k, cls = "ico") => ICONS[k] ? `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>` : esc(k || "");
+
+// Page titles for the header; the colour of the little tab shape follows the sidebar section.
+const TITLES = { home: "Home", engage: "Engage", kudos: "Kudos", feedback: "Feedback", tasks: "Tasks", review: "Review", payslips: "Payslips", ytd: "YTD Reports", "it-statement": "IT Statement", "it-declaration": "IT Declaration", loans: "Loans and Advances", reimbursement: "Reimbursement", poi: "Proof Of Investment", "salary-revision": "Salary Revision", "leave-apply": "Leave Apply", "leave-balances": "Leave Balances", "leave-calendar": "Leave Calendar", holidays: "Holiday Calendar", attendance: "Attendance Info", regularization: "Regularization & Permission", documents: "Document Center", people: "People", helpdesk: "Helpdesk", "request-hub": "Request Hub", delegates: "Workflow Delegates", "my-info": "My Info", executive: "Leadership Suite", admin: "HR Admin", accounts: "Accounts Admin" };
+const CRUMB_COLOR = { home: "#c4b5fd", engage: "#fdba9b", kudos: "#5ed3d1", feedback: "#5ed3d1", tasks: "#86d9a0", review: "#86d9a0", "leave-apply": "#5fd1d8", "leave-balances": "#5fd1d8", "leave-calendar": "#5fd1d8", holidays: "#5fd1d8", attendance: "#c4b5fd", regularization: "#c4b5fd", documents: "#f0a8d8", people: "#c4b5fd" };
+const QUICK_LINKS = [["#/payslips", "Payslips"], ["#/leave-apply", "Apply Leave"], ["#/attendance", "Attendance Info"], ["#/regularization", "Regularization"], ["#/holidays", "Holiday Calendar"], ["#/documents", "Document Center"], ["#/people", "People Directory"], ["#/helpdesk", "Raise a Ticket"]];
+// Pages can replace the header trail, e.g. setCrumb(["Attendance Info", "My Regularizations"])
+function setCrumb(parts) {
+  const el = $("#crumb"); if (!el) return;
+  el.innerHTML = parts.map((p, i) => i === parts.length - 1 ? `<b>${esc(p)}</b>` : `<span>${esc(p)}</span><i>/</i>`).join("");
+}
 
 P["my-info"] = async el => {
   const m = ME;
@@ -1585,34 +1618,34 @@ function bindSide(route) {
     window.__sideCloseBound = true;
     document.addEventListener("click", e => {
       if (!e.target.closest(".grp") && !e.target.closest(".sub")) {
-        if (openGroups.size) { openGroups.clear(); document.querySelectorAll(".sub.open").forEach(s=>s.classList.remove("open")); document.querySelectorAll(".grp").forEach(bb=>{bb.setAttribute("aria-expanded","false"); const c=bb.querySelector(".chev"); if(c) c.textContent="▼";}); }
+        if (openGroups.size) { openGroups.clear(); document.querySelectorAll(".sub.open").forEach(s=>s.classList.remove("open")); document.querySelectorAll(".grp").forEach(bb=>bb.setAttribute("aria-expanded","false")); }
       }
     });
   }
 }
 function sidebar(route) {
-  const link = (r, l, ic) => `<a href="#/${r}" onclick="setTimeout(()=>render(),0)" class="${r === route ? "on" : ""}"><span class="ic" aria-hidden="true">${ic || ""}</span>${esc(l)}${r === "review" && ME.pending_reviews ? ` <span class="badge pending">${ME.pending_reviews}</span>` : ""}</a>`;
+  const link = (r, l, ic) => `<a href="#/${r}" onclick="setTimeout(()=>render(),0)" class="${r === route ? "on" : ""}"><span class="ic" aria-hidden="true">${icon(ic)}</span>${esc(l)}${r === "review" && ME.pending_reviews ? ` <span class="badge pending">${ME.pending_reviews}</span>` : ""}</a>`;
   const isExec = EXEC_ROLES.includes(ME.role);
   const isHR = HR_LIKE_ROLES.includes(ME.role) || ME.role === "superadmin";
   let navList = [...NAV];
   if (isExec) {
     if (ME.role === "superadmin") {
-      navList = [["executive", "Superadmin Suite", "🏛"], ...navList];
+      navList = [["executive", "Superadmin Suite", "suite"], ...navList];
     } else {
       // HR Admin sits at the top, above Home
-      navList = [["executive", `${ME.role.toUpperCase()} Suite`, "🏛"], ["admin", "HR Admin", "★"], ...navList, ["accounts", "Accounts Admin", "▤"]];
+      navList = [["executive", `${ME.role.toUpperCase()} Suite`, "suite"], ["admin", "HR Admin", "admin"], ...navList, ["accounts", "Accounts Admin", "accounts"]];
     }
   } else if (isHR) {
-    navList = [["admin", "HR Admin", "★"], ...navList];
+    navList = [["admin", "HR Admin", "admin"], ...navList];
   } else if (ME.role === "accounts" || ME.role === "superadmin") {
-    navList = [...navList, ["accounts", "Accounts Admin", "▤"]];
+    navList = [...navList, ["accounts", "Accounts Admin", "accounts"]];
   }
   return `<div class="logo"><img src="assets/logo.png" alt="" aria-hidden="true"><span>3Wheels AI</span></div>
-  <div class="prof"><span class="avatar">${esc(ME.name[0])}</span><div><b>Hi ${esc(ME.name.split(" ")[0])}</b> <span class="badge ${esc(ME.role)}">${esc(ME.role.toUpperCase())}</span><br><a href="#/my-info">View My Info</a></div><a href="#/my-info" class="gear" aria-label="Settings">⚙</a></div>
+  <div class="prof"><span class="avatar">${esc(ME.name[0])}</span><div><b>Hi ${esc(ME.name.split(" ")[0])}</b> <span class="badge ${esc(ME.role)}">${esc(ME.role.toUpperCase())}</span><br><a href="#/my-info">View My Info</a></div><a href="#/my-info" class="gear" aria-label="Settings">${icon("admin")}</a></div>
   <nav>${navList.map(n => {
     if (typeof n[2] !== "object") return link(n[0], n[1], n[2]);
     const [label, ic, kids] = n, has = kids.some(k => k[0] === route), open = openGroups.size ? openGroups.has(label) : has;
-    return `<button class="grp" data-g="${esc(label)}" aria-expanded="${open}"><span class="ic" aria-hidden="true">${ic}</span>${esc(label)}<span class="chev">${open ? "▲" : "▼"}</span></button><div class="sub ${open ? "open" : ""}">${kids.map(k => link(k[0], k[1])).join("")}</div>`;
+    return `<button class="grp" data-g="${esc(label)}" aria-expanded="${open}"><span class="ic" aria-hidden="true">${icon(ic)}</span>${esc(label)}<span class="chev">${icon("chev", "ico sm")}</span></button><div class="sub ${open ? "open" : ""}">${kids.map(k => link(k[0], k[1])).join("")}</div>`;
   }).join("")}</nav>`;
 }
 
@@ -1728,16 +1761,26 @@ function render() {
   const route = (location.hash.replace("#/", "") || (["ceo", "coo", "cpo", "executive"].includes(ME.role) ? "executive" : "home"));
   openGroups.clear();  // on every page change only the current page's dropdown starts open
   app.innerHTML = `<div class="shell"><aside id="side" aria-label="Main menu">${sidebar(route)}</aside>
-  <div class="main"><header><button class="btn sec sm menu-btn" id="mb" aria-label="Menu">☰</button><span class="mute">${esc(ME.designation)} · ${esc(ME.department)}</span><span class="who">${themeBtn()}<button class="bell" id="bell" aria-label="Notifications">🔔<b id="bellcount">${ME.unread || ""}</b></button><span>${esc(ME.name)} <span class="badge ${esc(ME.role)}">${esc(ME.role.toUpperCase())}</span> <span class="mute">#${esc(ME.emp_no)}</span></span><button class="btn sec sm" id="out">Sign out</button></span></header><main id="page" tabindex="-1"></main></div></div>`;
+  <div class="main"><header class="topbar"><button class="menu-btn" id="mb" aria-label="Menu">☰</button>
+    <div class="crumb"><span class="crumb-shape" style="--c:${CRUMB_COLOR[route] || "#c4b5fd"}"></span><span id="crumb"></span></div>
+    <div class="top-right">
+      <div class="ql"><button class="ql-btn" id="ql" type="button" aria-haspopup="true" aria-expanded="false">Quick Links ${icon("chev", "ico sm")}</button>
+        <div class="ql-panel" id="ql-panel" hidden>${QUICK_LINKS.map(l => `<a href="${l[0]}">${esc(l[1])}</a>`).join("")}</div></div>
+      ${themeBtn()}
+      <button class="bell" id="bell" aria-label="Notifications">${icon("bell")}<b id="bellcount">${ME.unread || ""}</b></button>
+      <button class="signout" id="out" type="button" aria-label="Sign out" title="Sign out">${icon("power")}</button>
+    </div></header><main id="page" tabindex="-1"></main><footer class="foot">© ${new Date().getFullYear()} 3Wheels AI · HR Portal</footer></div></div>`;
   bindSide(route); bindTheme();
+  setCrumb([TITLES[route] || titleCase(route)]);
   $("#mb").onclick = () => $("#side").classList.toggle("open");
   $("#out").onclick = async () => { await api("logout", "POST"); ME = null; render(); };
+  const qlBtn = $("#ql"), qlPanel = $("#ql-panel");
+  qlBtn.onclick = e => { e.stopPropagation(); qlPanel.hidden = !qlPanel.hidden; qlBtn.setAttribute("aria-expanded", String(!qlPanel.hidden)); };
+  qlPanel.onclick = () => { qlPanel.hidden = true; qlBtn.setAttribute("aria-expanded", "false"); };
+  if (!window.__qlClose) { window.__qlClose = true; document.addEventListener("click", () => { const p = $("#ql-panel"); if (p && !p.hidden) { p.hidden = true; const b = $("#ql"); if (b) b.setAttribute("aria-expanded", "false"); } }); }
   $("#bell").onclick = async () => { const n = await api("notifications"); $("#page").innerHTML = `<h1>Notifications</h1><div class="card">${table([["Message", r => r.text + (r.text.includes("requested payslip") ? ' <button class="btn sm" onclick="location.hash=\'#/accounts\';render();">Execute</button>' : r.text.includes("is ready") ? ' <button class="btn sm" onclick="location.hash=\'#/payslips\';render();">Download</button>' : ""), 1], ["Received at", r => r.created_at]], n, "No notifications.")}</div>`; $("#bellcount").textContent = ""; };
   const page = $("#page");
   (P[route] || P.home)(page).catch(e => { page.innerHTML = `<div class="card err">${esc(e.message)}</div>`; });
 }
-window.addEventListener("hashchange", () => ME && render());
-checkHealth().then(bootMe).then(render);
-
-
-let _idle; function _resetIdle(){ clearTimeout(_idle); _idle=setTimeout(()=>{ api('logout','POST').finally(()=>{ ME=null; render(); }); }, 300000); } ['click','mousemove','keydown','scroll','touchstart'].forEach(e=>document.addEventListener(e,_resetIdle,{passive:true})); _resetIdle();
+// The start-up code (first render, hash routing, idle logout) lives in boot.js,
+// which index.html loads after this file and the page files.
