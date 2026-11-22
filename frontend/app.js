@@ -267,6 +267,8 @@ P.engage = async el => {
     return rows;
   };
 
+  const t0 = new Date(), todayIso = `${t0.getFullYear()}-${String(t0.getMonth() + 1).padStart(2, "0")}-${String(t0.getDate()).padStart(2, "0")}`;
+  const isToday = it => it.kind === "birthday" && String(it.created_at).slice(0, 10) === todayIso;
   const card = it => {
     let inner = "";
     if (it.kind === "post") inner = `<p class="fc-text">${esc(it.body)}</p>`;
@@ -275,13 +277,19 @@ P.engage = async el => {
       inner = `<p class="fc-text">${esc(it.body)}</p><div class="poll">${(it.options || "").split("|").map(o => `<div class="poll-opt"><button class="btn sec sm" type="button" data-vote="${it.id}" data-o="${esc(o)}">${it.my_vote === o ? "✓ " : ""}${esc(o)}</button> <span class="mute">${res[o] || 0} vote(s)</span><div class="bar"><i style="width:${(res[o] || 0) / total * 100}%"></i></div></div>`).join("")}</div>`;
     } else if (it.kind === "kudos") {
       inner = `<div class="fc-feature"><div class="fc-art">${ART.kudos}</div><div><p class="fc-big">${esc(it.from_name)} gave kudos to ${esc(it.to_name)}</p><span class="badge">${esc(it.value)}</span><p class="fc-text">${esc(it.message)}</p></div></div>`;
+    } else if (isToday(it)) {
+      // today's birthday: a bigger, celebratory card
+      const sub = [it.designation, it.department].filter(Boolean).join(" · ");
+      inner = `<div class="fc-feature"><div class="fc-art">${ART.cake}</div><div><p class="fc-kicker">Today's Birthday</p>
+        <div class="fc-who"><span class="avatar big">${esc(it.author[0])}</span><div><b class="fc-big2">Happy Birthday, ${esc(it.author)}! 🎂</b>${sub ? `<div class="mute">${esc(sub)}</div>` : ""}</div></div>
+        <p class="fc-text">Wishing you a wonderful year ahead. 🎉🎈</p></div></div>`;
     } else {
       inner = `<div class="fc-feature"><div class="fc-art">${ART.cake}</div><div><p class="mute fc-small">Happy Birthday ${esc(it.author)}, Have a great year ahead!</p><div class="fc-who"><span class="avatar sm">${esc(it.author[0])}</span><b class="fc-big">Happy Birthday, ${esc(it.author)}!</b></div></div></div>`;
     }
     const who = it.kind === "birthday" ? `<div class="fc-logo"><img src="assets/logo.png" alt=""></div><div><b>3Wheels AI</b><div class="mute fc-group">Group: ${esc(it.group)}</div></div>`
       : `<div class="avatar">${esc((it.author || "?")[0])}</div><div><b>${esc(it.author)}</b><div class="mute fc-group">Group: ${esc(it.group)}</div></div>`;
     const key = esc(it.key), mine = it.my_reaction;
-    return `<article class="card fc"><div class="fc-head"><div class="fc-who">${who}</div><span class="mute fc-time">${esc(timeAgo(it))}</span></div>${inner}
+    return `<article class="card fc${isToday(it) ? " fc-bday-today" : ""}"><div class="fc-head"><div class="fc-who">${who}</div><span class="mute fc-time">${esc(timeAgo(it))}</span></div>${inner}
       <div class="fc-foot"><div class="fc-rwrap"><button type="button" class="fc-react ${mine ? "on" : ""}" data-ropen>${mine || "☺"} Reaction</button>
         <div class="fc-picker" hidden>${REACTIONS.map(e => `<button type="button" class="${mine === e ? "on" : ""}" data-react="${key}" data-e="${e}" aria-label="React ${e}">${e}</button>`).join("")}</div></div>
         ${Object.entries(it.reactions || {}).map(([e, c]) => `<button type="button" class="fc-chip ${mine === e ? "mine" : ""}" data-react="${key}" data-e="${e}">${e} ${c}</button>`).join("")}</div></article>`;

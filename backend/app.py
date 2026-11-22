@@ -603,7 +603,7 @@ def feed(u):
         items.append(dict(k, key="kudos:%d" % k["id"], kind="kudos", group="Recognition", author=k["from_name"], body=k["message"]))
 
     today = date.today()
-    for e in q("SELECT id, name, dob, location, department FROM employees WHERE active=1 AND dob IS NOT NULL AND dob<>''"):
+    for e in q("SELECT id, name, dob, location, department, designation FROM employees WHERE active=1 AND dob IS NOT NULL AND dob<>''"):
         for year in (today.year, today.year - 1):  # a birthday just before New Year is still recent in January
             try:
                 when = date(year, int(e["dob"][5:7]), int(e["dob"][8:10]))
@@ -611,8 +611,9 @@ def feed(u):
                 break
             if 0 <= (today - when).days <= 7:
                 items.append(dict(key="bday:%s:%d" % (when.isoformat(), e["id"]), kind="birthday", group="Events",
-                                  id=e["id"], author=e["name"], body="", created_at=when.isoformat() + " 00:00:00",
-                                  location=e["location"], department=e["department"]))
+                                  # end of that day, so a birthday sits above the other items of the same day
+                                  id=e["id"], author=e["name"], body="", created_at=when.isoformat() + " 23:59:59",
+                                  location=e["location"], department=e["department"], designation=e["designation"]))
                 break
 
     counts = {}

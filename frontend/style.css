@@ -269,6 +269,11 @@ h1,h2,h3,label,button,.badge{text-transform:capitalize}
 .fc-picker button.on{background:var(--brand-l)}
 .fc-chip{padding:2px 9px;border:1px solid var(--line);border-radius:99px;background:var(--card);color:var(--ink);font:inherit;font-size:12px;text-transform:none;cursor:pointer}
 .fc-chip.mine{border-color:var(--brand);background:var(--brand-l)}
+.fc-bday-today{border-color:#fcd34d;background:linear-gradient(135deg,color-mix(in srgb,#fbbf24 20%,var(--card)),color-mix(in srgb,#f472b6 14%,var(--card)) 60%,color-mix(in srgb,#818cf8 12%,var(--card)))}
+.fc-bday-today .fc-art{width:130px}
+.fc-kicker{margin:0 0 8px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#b45309}
+:root[data-theme="dark"] .fc-kicker{color:#fbbf24}
+.fc-big2{display:block;font-size:20px;font-weight:800;letter-spacing:-.01em;text-transform:none}
 .modal-back{position:fixed;inset:0;z-index:60;display:flex;align-items:flex-start;justify-content:center;padding:8vh 16px;overflow:auto;background:rgba(0,0,0,.45)}
 .modal{width:100%;max-width:520px;margin:0}
 .modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}

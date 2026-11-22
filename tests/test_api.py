@@ -261,6 +261,7 @@ def test_engage_feed_reactions_and_birthdays():
     A.run("UPDATE employees SET dob=? WHERE id=5", ("1995-%02d-%02d" % (today.month, today.day),))
     feed = k.get("/api/feed").get_json()
     assert any(i["key"] == "bday:%s:5" % today.isoformat() and i["kind"] == "birthday" for i in feed)
+    assert feed[0]["kind"] == "birthday"  # today's birthday is the latest item, above today's kudos
     # newest first
     stamps = [str(i["created_at"]) for i in feed]
     assert stamps == sorted(stamps, reverse=True)
