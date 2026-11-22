@@ -572,7 +572,7 @@ def people_teams(u):
 
 @app.get("/api/orgchart")
 @auth()
-def org(u): return jsonify(q("SELECT id,name,designation,manager_id,role,department FROM employees WHERE active=1"))
+def org(u): return jsonify(q("SELECT id,emp_no,name,designation,manager_id,role,department FROM employees WHERE active=1"))
 
 
 # ---------- engage ----------
