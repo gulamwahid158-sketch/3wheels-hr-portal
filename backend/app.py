@@ -8,6 +8,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+import pymysql
 import db
 from designations import DESIGNATION_GROUPS, DESIGNATIONS, DEPARTMENTS
 
@@ -113,6 +114,13 @@ def body(*req):
     miss = [r for r in req if j.get(r) in (None, "")]
     if miss: raise ValueError("Missing: " + ", ".join(miss))
     return j
+
+
+@app.errorhandler(pymysql.err.OperationalError)
+def db_unavailable(e):
+    # e.g. hosted MySQL connection limit reached, or the database is unreachable
+    print("[DB error]", e)
+    return jsonify(error="The database is busy or unreachable. Please try again in a few minutes."), 503
 
 
 @app.errorhandler(ValueError)

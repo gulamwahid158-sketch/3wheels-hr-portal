@@ -14,7 +14,7 @@ on (``execute(sql, args)``, ``fetchall()``, ``fetchone()``, ``lastrowid``,
 ``commit()``, ``close()``) while translating ``?`` placeholders to MySQL's
 ``%s`` and normalising result values (Decimal -> number, datetime -> string).
 """
-import os, random
+import os, random, threading, time
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
@@ -181,8 +181,10 @@ class _Result:
 class Conn:
     """Thin wrapper giving pymysql a sqlite3-like surface."""
 
-    def __init__(self, raw):
+    def __init__(self, raw, pooled=False):
         self._raw = raw
+        self._pooled = pooled
+        self._closed = False
 
     def execute(self, sql, args=()):
         cur = self._raw.cursor()
@@ -208,6 +210,19 @@ class Conn:
         self._raw.rollback()
 
     def close(self):
+        """Pooled connections go back to the pool; others are really closed."""
+        if self._closed:
+            return
+        self._closed = True
+        if self._pooled:
+            try:
+                self._raw.rollback()  # end the read snapshot, drop any uncommitted work
+                with _POOL_LOCK:
+                    if len(_POOL) < _POOL_MAX:
+                        _POOL.append((self._raw, time.time()))
+                        return
+            except Exception:
+                pass
         try:
             self._raw.close()
         except Exception:
@@ -233,9 +248,43 @@ def _connect(database=None):
     return pymysql.connect(cursorclass=DictCursor, charset="utf8mb4", autocommit=False, **cfg)
 
 
+# Opening a MySQL connection is slow over the internet and hosted MySQL caps how
+# many connections an account may open per hour (Hostinger: 500). So connections
+# are kept in a small pool and reused instead of opened for every query.
+_POOL = []  # idle raw connections as (connection, last_used_timestamp)
+_POOL_LOCK = threading.Lock()
+_POOL_MAX = int(os.environ.get("DB_POOL_SIZE", "4"))
+_PING_AFTER = 10  # seconds idle before a connection is checked and revived
+
+
+def _checkout():
+    while True:
+        with _POOL_LOCK:
+            item = _POOL.pop() if _POOL else None
+        if item is None:
+            return _connect()
+        raw, last_used = item
+        if time.time() - last_used > _PING_AFTER:
+            try:
+                raw.ping(reconnect=True)
+            except Exception:
+                try: raw.close()
+                except Exception: pass
+                continue
+        return raw
+
+
+def _close_pool():
+    with _POOL_LOCK:
+        items, _POOL[:] = list(_POOL), []
+    for raw, _ in items:
+        try: raw.close()
+        except Exception: pass
+
+
 def conn():
-    """Open a new connection to the configured database."""
-    return Conn(_connect())
+    """Get a connection to the configured database (reused from the pool)."""
+    return Conn(_checkout(), pooled=True)
 
 
 def columns(table):
@@ -269,6 +318,7 @@ def _ensure_database(reset):
     account usually cannot CREATE/DROP DATABASE but the database already exists,
     so we only reach for the admin connection when a direct connect fails."""
     name = config()["database"]
+    _close_pool()  # pooled connections may point at a database we are about to drop
     if reset:
         try:
             admin = Conn(_connect(database=""))
