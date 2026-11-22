@@ -1687,6 +1687,14 @@ def exec_summary(u):
     )
 
 
+@app.get("/api/health")
+def health():
+    """Cheap liveness check used by the frontend to show a maintenance screen.
+    A database failure raises OperationalError, which is answered with a 503."""
+    q("SELECT 1 ok", one=True)
+    return jsonify(ok=True)
+
+
 @app.get("/")
 def index(): return send_from_directory(ROOT, "index.html")
 

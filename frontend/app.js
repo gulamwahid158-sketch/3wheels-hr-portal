@@ -4,9 +4,12 @@ const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": 
 const inr = n => "₹" + Number(n || 0).toLocaleString("en-IN");
 const fdate = s => s ? new Date(s.length === 10 ? s + "T00:00" : s.replace(" ", "T")).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "-";
 let ME = null;
+let MAINT = false, _maintTimer = null;
 
 async function api(path, method = "GET", data) {
   const r = await fetch("/api/" + path, { method, headers: { "Content-Type": "application/json" }, body: data ? JSON.stringify(data) : undefined });
+  // 502/503/504 = server or database temporarily unavailable -> maintenance screen
+  if ([502, 503, 504].includes(r.status)) { MAINT = true; render(); throw new Error("The portal is under maintenance"); }
   const j = await r.json().catch(() => ({}));
   if (r.status === 401 && path !== "login") { ME = null; render(); throw new Error("Please log in"); }
   if (!r.ok) throw new Error(j.error || "Request failed");
@@ -1386,8 +1389,33 @@ function bindTheme() {
 
 async function refreshMe() { try { ME = await api("me"); const b = $("#bellcount"); if (b) b.textContent = ME.unread || ""; } catch { } }
 
+function retryAfterMaintenance() {
+  clearTimeout(_maintTimer);
+  MAINT = false;
+  checkHealth().then(refreshMe).then(render);  // a 503 here switches the maintenance screen straight back on
+}
+
+// Asks the server (and through it the database) if all is well; a 503 turns on the maintenance screen.
+async function checkHealth() { try { await api("health"); } catch { } }
+
+function renderMaintenance(app) {
+  app.innerHTML = `${themeBtn("theme-float")}<div class="maint-wrap"><div class="maint card">
+    <div class="maint-icon" aria-hidden="true">🛠️</div>
+    <div class="login-brand"><img src="assets/logo.png" alt=""><span>3Wheels AI</span></div>
+    <h1>We'll be back soon</h1>
+    <p class="mute">The website is under maintenance right now. Please wait a few minutes. This page checks again by itself and opens the portal as soon as it is ready.</p>
+    <button class="btn" id="maint-retry" type="button">Try again</button>
+    <p class="mute maint-note">Sorry for the inconvenience.</p>
+  </div></div>`;
+  bindTheme();
+  $("#maint-retry").onclick = retryAfterMaintenance;
+  clearTimeout(_maintTimer);
+  _maintTimer = setTimeout(retryAfterMaintenance, 20000);
+}
+
 function render() {
   const app = $("#app");
+  if (MAINT) { renderMaintenance(app); return; }
   if (!ME) {
     app.innerHTML = `${themeBtn("theme-float")}<div class="login-wrap">
       <section class="login-hero" aria-hidden="true">
@@ -1439,7 +1467,7 @@ function render() {
   (P[route] || P.home)(page).catch(e => { page.innerHTML = `<div class="card err">${esc(e.message)}</div>`; });
 }
 window.addEventListener("hashchange", () => ME && render());
-refreshMe().then(render);
+checkHealth().then(refreshMe).then(render);
 
 
 let _idle; function _resetIdle(){ clearTimeout(_idle); _idle=setTimeout(()=>{ api('logout','POST').finally(()=>{ ME=null; render(); }); }, 300000); } ['click','mousemove','keydown','scroll','touchstart'].forEach(e=>document.addEventListener(e,_resetIdle,{passive:true})); _resetIdle();

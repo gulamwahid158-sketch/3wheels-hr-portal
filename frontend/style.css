@@ -179,6 +179,18 @@ h1,h2,h3,label,button,.badge{text-transform:capitalize}
 .login-panel .login{margin:0 auto;max-width:410px;padding:34px 32px 26px;border-radius:20px;animation:loginrise .45s ease both}
 .login-panel .login-brand{display:none}
 .login .row{grid-template-columns:1fr}
+
+/* ---- Maintenance screen ---- */
+.maint-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px 16px;background:radial-gradient(circle at 15% 10%,color-mix(in srgb,var(--brand) 14%,transparent),transparent 55%),radial-gradient(circle at 85% 90%,rgba(59,130,246,.14),transparent 55%),var(--bg)}
+.maint{max-width:460px;width:100%;text-align:center;padding:38px 32px 30px;border-radius:22px;box-shadow:var(--shadow-lg);animation:loginrise .45s ease both}
+.maint-icon{font-size:44px;line-height:1;margin-bottom:10px}
+.maint .login-brand{display:flex;flex-direction:column;align-items:center;gap:6px;margin-bottom:14px}
+.maint .login-brand img{width:56px;height:56px}
+.maint .login-brand span{font-size:20px;font-weight:800;letter-spacing:-.02em;text-transform:none}
+.maint h1{margin:0 0 8px;font-size:28px;font-weight:800;text-transform:none;background:linear-gradient(135deg,var(--brand),#3b82f6);-webkit-background-clip:text;background-clip:text;color:transparent}
+.maint p{margin:0 0 18px;line-height:1.6}
+.maint button.btn{text-transform:none;padding:11px 26px}
+.maint .maint-note{margin:16px 0 0;font-size:12px}
 .login .login-sub{margin:0 0 10px}
 .login h1{font-size:28px;font-weight:800;letter-spacing:-.02em}
 .login h1,.login button.btn,.login label{text-transform:none}
