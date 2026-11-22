@@ -373,7 +373,7 @@ def regularize(u):
 
 @app.get("/api/regularization")
 @auth()
-def regs(u): return jsonify(q("SELECT * FROM regularizations WHERE emp_id=? ORDER BY id DESC", (u["id"],)))
+def regs(u): return jsonify(q("SELECT r.*, a.name approver_name FROM regularizations r LEFT JOIN employees a ON a.id=r.approver_id WHERE r.emp_id=? ORDER BY r.id DESC", (u["id"],)))
 
 
 # ---------- salary ----------

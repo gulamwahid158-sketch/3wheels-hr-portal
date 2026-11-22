@@ -355,7 +355,7 @@ P.engage = async el => {
         <button class="eg-tile teal" type="button" data-open="poll"><span>📊</span>Create Polls</button>
         ${canPost ? '<button class="eg-tile violet" type="button" data-open="post"><span>📝</span>Create Post</button>' : ""}
       </div></section>
-    <div class="eg-body"><aside class="card eg-filters" id="eg-filters"></aside>
+    <div class="eg-body"><div class="card eg-filters" id="eg-filters"></div>
       <section class="eg-main"><div class="eg-bar"><span id="eg-title">All Activities - All Groups</span>
         <label class="eg-sort">Sort: <select id="eg-sort"><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select></label></div>
         <div id="eg-list"></div></section></div></div>`;
@@ -581,34 +581,8 @@ P.holidays = async el => {
   el.innerHTML = `<h1>Holiday Calendar</h1><div class="card">${table([["Date", r => fdate(r.date)], ["Holiday", r => r.name], ["Type", r => r.restricted ? "Restricted (optional)" : "Public"]], h)}</div>`;
 };
 
-// ---- attendance
-P.attendance = async el => {
-  const draw = async mo => {
-    const a = await api("attendance?month=" + mo), by = Object.fromEntries(a.days.map(d => [d.date, d])), s = a.summary;
-    el.innerHTML = `<h1>Attendance Info</h1><div class="grid">
-      <div class="card"><span class="mute">Present</span><div class="stat">${s.present}</div></div><div class="card"><span class="mute">Absent</span><div class="stat">${s.absent}</div></div>
-      <div class="card"><span class="mute">Leave</span><div class="stat">${s.leave}</div></div><div class="card"><span class="mute">Late in</span><div class="stat">${s.late_in}</div></div>
-      <div class="card"><span class="mute">Avg first in / last out</span><div class="stat" style="font-size:20px">${s.avg_first_in} / ${s.avg_last_out}</div></div></div>
-      ${a.exceptions.length ? `<div class="card"><b>${a.exceptions.length} exception day(s):</b> ${a.exceptions.map(fdate).join(", ")} · <a href="#/regularization">Regularize</a></div>` : ""}
-      <div class="card">${monthPicker("mo", mo)} <span class="mute">Shift ${esc(a.shift)}</span><br><br>${calendar(mo, iso => { const d = by[iso]; return d ? [d.status, d.first_in ? `${d.first_in}–${d.last_out}` : d.status] : ["", ""]; })}</div>`;
-    $("#mo").onchange = e => e.target.value && draw(e.target.value);
-  };
-  draw(thisMonth());
-};
-P.regularization = async el => {
-  let tab = 0;
-  const draw = async () => {
-    const [r, approvers] = await Promise.all([api("regularization"), api("approval-info")]);
-    const kind = tab === 0 ? "regularize" : "permission";
-    const approverOpts2 = [];
-if (approvers.manager) approverOpts2.push([approvers.manager.id, approvers.manager.name + " (Manager)"]);
-approvers.backups.forEach(b => approverOpts2.push([b.id, b.name + " (" + b.role.toUpperCase() + ")"]));
-el.innerHTML = `<h1>Regularization & Permission</h1>${approvalBanner(approvers)}${tabs(["Regularization", "Permission"], tab)}<div class="card">${form("gf", [{ n: "approver_id", label: "Approver", type: "select", opts: approverOpts2 }, { n: "date", label: "Date", type: "date" }, { n: "in_time", label: "In time", type: "time", req: tab === 0 }, { n: "out_time", label: "Out time", type: "time", req: tab === 0 }, { n: "reason", label: "Reason", type: "textarea" }], "Apply")}</div>
-    <div class="card"><h2>History</h2>${table([["Type", x => x.kind], ["Date", x => fdate(x.date)], ["Time", x => `${x.in_time || ""}–${x.out_time || ""}`], ["Reason", x => x.reason], ["Status", x => badge(x.status), 1]], r)}</div>`;
-    wireTabs(i => { tab = i; draw(); }); wire("gf", "regularization", draw, d => ({ ...d, kind, approver_id: d.approver_id ? +d.approver_id : undefined }));
-  };
-  draw();
-};
+// Attendance pages (Attendance Info, My Regularizations, Regularization & Permission) live in pages-attendance.js
+
 
 // ---- docs / people / hub
 P.documents = async el => {
@@ -755,6 +729,8 @@ const icon = (k, cls = "ico") => ICONS[k] ? `<svg class="${cls}" viewBox="0 0 24
 
 // Page titles for the header; the colour of the little tab shape follows the sidebar section.
 const TITLES = { home: "Home", engage: "Engage", kudos: "Kudos", feedback: "Feedback", tasks: "Tasks", review: "Review", payslips: "Payslips", ytd: "YTD Reports", "it-statement": "IT Statement", "it-declaration": "IT Declaration", loans: "Loans and Advances", reimbursement: "Reimbursement", poi: "Proof Of Investment", "salary-revision": "Salary Revision", "leave-apply": "Leave Apply", "leave-balances": "Leave Balances", "leave-calendar": "Leave Calendar", holidays: "Holiday Calendar", attendance: "Attendance Info", regularization: "Regularization & Permission", documents: "Document Center", people: "People", helpdesk: "Helpdesk", "request-hub": "Request Hub", delegates: "Workflow Delegates", "my-info": "My Info", executive: "Leadership Suite", admin: "HR Admin", accounts: "Accounts Admin" };
+const ROUTE_ALIAS = { "my-regularizations": "attendance" };
+TITLES["my-regularizations"] = "My Regularizations";
 const CRUMB_COLOR = { home: "#c4b5fd", engage: "#fdba9b", kudos: "#5ed3d1", feedback: "#5ed3d1", tasks: "#86d9a0", review: "#86d9a0", "leave-apply": "#5fd1d8", "leave-balances": "#5fd1d8", "leave-calendar": "#5fd1d8", holidays: "#5fd1d8", attendance: "#c4b5fd", regularization: "#c4b5fd", documents: "#f0a8d8", people: "#c4b5fd" };
 const QUICK_LINKS = [["#/payslips", "Payslips"], ["#/leave-apply", "Apply Leave"], ["#/attendance", "Attendance Info"], ["#/regularization", "Regularization"], ["#/holidays", "Holiday Calendar"], ["#/documents", "Document Center"], ["#/people", "People Directory"], ["#/helpdesk", "Raise a Ticket"]];
 // Pages can replace the header trail, e.g. setCrumb(["Attendance Info", "My Regularizations"])
@@ -1760,7 +1736,8 @@ function render() {
   }
   const route = (location.hash.replace("#/", "") || (["ceo", "coo", "cpo", "executive"].includes(ME.role) ? "executive" : "home"));
   openGroups.clear();  // on every page change only the current page's dropdown starts open
-  app.innerHTML = `<div class="shell"><aside id="side" aria-label="Main menu">${sidebar(route)}</aside>
+  const navRoute = ROUTE_ALIAS[route] || route;   // sub pages light up their parent in the sidebar
+  app.innerHTML = `<div class="shell"><aside id="side" aria-label="Main menu">${sidebar(navRoute)}</aside>
   <div class="main"><header class="topbar"><button class="menu-btn" id="mb" aria-label="Menu">☰</button>
     <div class="crumb"><span class="crumb-shape" style="--c:${CRUMB_COLOR[route] || "#c4b5fd"}"></span><span id="crumb"></span></div>
     <div class="top-right">
@@ -1770,7 +1747,7 @@ function render() {
       <button class="bell" id="bell" aria-label="Notifications">${icon("bell")}<b id="bellcount">${ME.unread || ""}</b></button>
       <button class="signout" id="out" type="button" aria-label="Sign out" title="Sign out">${icon("power")}</button>
     </div></header><main id="page" tabindex="-1"></main><footer class="foot">© ${new Date().getFullYear()} 3Wheels AI · HR Portal</footer></div></div>`;
-  bindSide(route); bindTheme();
+  bindSide(navRoute); bindTheme();
   setCrumb([TITLES[route] || titleCase(route)]);
   $("#mb").onclick = () => $("#side").classList.toggle("open");
   $("#out").onclick = async () => { await api("logout", "POST"); ME = null; render(); };
