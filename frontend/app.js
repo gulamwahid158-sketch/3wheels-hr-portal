@@ -754,6 +754,7 @@ P.admin = async el => {
       }
       const editFields = [
         { type: "section", label: "Account & Work Details" },
+        { n: "emp_no", label: "Employee code", value: ev.emp_no, placeholder: "e.g. 3WAI00001" },
         { n: "name", label: "Full name", value: ev.name },
         { n: "email", label: "Official work email (read-only)", type: "email", value: ev.email, readonly: true, req: false },
         { n: "role", label: "Role", type: "select", opts: roleChoices, value: ev.role },

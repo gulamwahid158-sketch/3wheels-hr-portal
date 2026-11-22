@@ -1,4 +1,4 @@
-import os, functools, smtplib, calendar
+import os, re, functools, smtplib, calendar
 from io import BytesIO
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -875,6 +875,8 @@ def a_emp_add(u):
     if mgr and not q("SELECT id FROM employees WHERE id=? AND active=1", (mgr,), one=True): raise ValueError("Manager not found")
     if q("SELECT id FROM employees WHERE email=?", (email,), one=True): raise ValueError("Email already exists")
     n = (q("SELECT MAX(CAST(substr(emp_no,5) AS UNSIGNED)) m FROM employees", one=True)["m"] or 0) + 1
+    while q("SELECT id FROM employees WHERE emp_no=?", ("3WAI%05d" % n,), one=True):
+        n += 1  # a code may have been edited by hand, never reuse one
     emp_no = "3WAI%05d" % n
     extras = {f: str(j.get(f) or "").strip() for f in EMP_EXTRA_FIELDS}
     cols = [
@@ -910,6 +912,14 @@ def a_emp_upd(u, eid):
     if u["role"] == "hr" and e["role"] in EXEC_ROLES:
         raise ValueError("HR cannot modify executive leadership")
     sets, vals = [], []
+    if "emp_no" in j:
+        code = str(j["emp_no"] or "").strip().upper()
+        if code != e["emp_no"]:
+            if not re.fullmatch(r"[A-Z0-9._/-]{2,20}", code):
+                raise ValueError("Employee code must be 2 to 20 characters: letters, numbers or . _ / -")
+            if q("SELECT id FROM employees WHERE emp_no=? AND id!=?", (code, eid), one=True):
+                raise ValueError("Employee code %s is already used by someone else" % code)
+            sets.append("emp_no=?"); vals.append(code)
     for f in ("department", "designation", "location", "shift", "dob", "skills") + EMP_EXTRA_FIELDS:
         if f in j: sets.append(f + "=?"); vals.append(j[f])
     if "name" in j:

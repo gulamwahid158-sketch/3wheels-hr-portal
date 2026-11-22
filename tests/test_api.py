@@ -94,6 +94,11 @@ def test_admin():
     assert created["employment_type"] == "Full-time"
     assert h.patch("/api/admin/employees/%d" % eid, json={"phone": "9999999999"}).status_code == 200
     assert next(e for e in h.get("/api/admin/employees").get_json() if e["id"] == eid)["phone"] == "9999999999"
+    # employee code is editable: normalised to upper case, must be unique and well formed
+    assert h.patch("/api/admin/employees/%d" % eid, json={"emp_no": "3wai09999"}).status_code == 200
+    assert next(e for e in h.get("/api/admin/employees").get_json() if e["id"] == eid)["emp_no"] == "3WAI09999"
+    assert h.patch("/api/admin/employees/%d" % eid, json={"emp_no": "PD0001"}).status_code == 400   # already taken
+    assert h.patch("/api/admin/employees/%d" % eid, json={"emp_no": "bad code!"}).status_code == 400
     assert h.post("/api/admin/employees", json=new).status_code == 400  # duplicate email
     n = A.app.test_client(); assert n.post("/api/login", json={"email": "t@example.com", "password": "longenough1"}).status_code == 200
     assert all(x["granted"] == 0 and x["balance"] == 0 for x in n.get("/api/leave/balances").get_json())  # new employees start with 0 leave
