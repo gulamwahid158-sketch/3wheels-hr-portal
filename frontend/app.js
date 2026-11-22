@@ -513,73 +513,9 @@ P["payslip-requests"] = P.accounts = async el => {
   };
   await draw();
 };
-// ---- leave
-function approvalBanner(info) {
-  const backups = (info.backups || []).map(b => `<b>${esc(b.name)}</b> <span class="badge ${esc(b.role)}">${esc(titleCase(b.role))}</span>`).join(", ") || '<span class="mute">—</span>';
-  return `<div class="card" style="border-left:4px solid var(--brand)">
-    <b>Who approves this</b>
-    <p class="mute" style="margin:6px 0 0">
-      ${info.manager
-      ? `Goes first to your reporting manager, <b>${esc(info.manager.name)}</b> (${esc(info.manager.designation || "Manager")}).`
-      : `<b>No reporting manager is assigned to you</b> — your request goes straight to HR/Executive approval.`}
-      <br>Backup approvers who can also approve or reject it anytime (e.g. if your manager is unavailable or you have none assigned): ${backups}
-    </p>
-  </div>`;
-}
-P["leave-apply"] = async el => {
-  let tab = 0;
-  const draw = async () => {
-    const [types, reqs, bal, hol, approvers] = await Promise.all([api("leave/types"), api("leave/requests"), api("leave/balances"), api("holidays"), api("approval-info")]);
-    const mine = k => reqs.filter(r => (Array.isArray(k) ? k : [k]).includes(r.kind));
-    const sess = [["1", "Session 1"], ["2", "Session 2"]];
-    const hist = (rows, cols) => `<div class="card"><h2>History</h2>${table(cols, rows)}</div>`;
-    let inner = "";
-    const approverOpts = [];
-if (approvers.manager) approverOpts.push([approvers.manager.id, approvers.manager.name + " (Manager)"]);
-approvers.backups.forEach(b => approverOpts.push([b.id, b.name + " (" + b.role.toUpperCase() + ")"]));
-// ...
-inner = "";
-if (tab === 0) inner = `<div class="card"><p class="mute">${bal.map(b => `${esc(b.name)}: <b>${b.balance}</b>`).join(" · ")}</p>${form("lf", [{ n: "code", label: "Leave type", type: "select", opts: types.map(t => [t.code, t.name]) }, { n: "approver_id", label: "Approver", type: "select", opts: approverOpts }, { n: "from_date", label: "From", type: "date" }, { n: "from_session", label: "Session", type: "select", opts: sess }, { n: "to_date", label: "To", type: "date" }, { n: "to_session", label: "Session", type: "select", opts: sess.slice().reverse() }, { n: "reason", label: "Reason", type: "textarea" }], "Apply")}</div>` + hist(mine("leave"), [["Type", r => r.code], ["From", r => fdate(r.from_date)], ["To", r => fdate(r.to_date)], ["Days", r => r.days], ["Reason", r => r.reason], ["Status", r => badge(r.status), 1]]);
-    if (tab === 1) inner = `<div class="card">${form("rf", [{ n: "date", label: "Restricted holiday", type: "select", opts: hol.filter(h => h.restricted).map(h => [h.date, h.name + " (" + fdate(h.date) + ")"]) }, { n: "reason", label: "Reason", type: "textarea" }], "Apply")}</div>` + hist(mine("rh"), [["Date", r => fdate(r.from_date)], ["Reason", r => r.reason], ["Status", r => badge(r.status), 1]]);
-    if (tab === 2) {
-      const cancellable = mine(["leave", "rh"]).filter(r => ["approved", "pending"].includes(r.status));
-      inner = `<div class="card">${cancellable.length ? form("cf2", [{ n: "request_id", label: "Leave to cancel", type: "select", opts: cancellable.map(r => [r.id, `${r.code} ${fdate(r.from_date)}→${fdate(r.to_date)} (${r.status})`]) }, { n: "reason", label: "Reason", type: "textarea" }], "Request cancellation") : '<p class="mute">No cancellable leave.</p>'}</div>` + hist(mine("cancel"), [["Leave", r => `${r.code} ${fdate(r.from_date)}→${fdate(r.to_date)}`], ["Reason", r => r.reason], ["Status", r => badge(r.status), 1]]);
-    }
-    if (tab === 3) inner = `<div class="card"><p class="mute">Claim a comp-off for a day you worked on an off day or holiday.</p>${form("of", [{ n: "date", label: "Worked on", type: "date" }, { n: "reason", label: "Reason", type: "textarea" }], "Request grant")}</div>` + hist(mine("compoff_grant"), [["Worked on", r => fdate(r.from_date)], ["Reason", r => r.reason], ["Status", r => badge(r.status), 1]]);
-    el.innerHTML = `<h1>Leave Apply</h1>${approvalBanner(approvers)}${tabs(["Leave", "Restricted Holiday", "Leave Cancel", "Comp Off Grant"], tab)}${inner}`;
-    wireTabs(i => { tab = i; draw(); });
-    wire("lf", "leave/apply", draw, d => ({ ...d, approver_id: d.approver_id ? +d.approver_id : undefined })); wire("rf", "leave/rh", draw); wire("cf2", "leave/cancel", draw, d => ({ ...d, request_id: +d.request_id })); wire("of", "leave/compoff", draw);
-  };
-  draw();
-};
-P["leave-balances"] = async el => {
-  const b = await api("leave/balances");
-  el.innerHTML = `<h1>Leave Balances</h1><div class="grid">${b.map(x => `<div class="card"><h2>${esc(x.name)}</h2><div class="stat">${x.balance}</div><p class="mute">Granted ${x.granted} · ${x.consumed} of ${x.granted} consumed</p><div class="bar"><i style="width:${x.granted ? x.consumed / x.granted * 100 : 0}%"></i></div></div>`).join("")}</div>`;
-};
-function calendar(month, cell) {
-  const [y, m] = month.split("-").map(Number), first = new Date(y, m - 1, 1), n = new Date(y, m, 0).getDate();
-  let h = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(d => `<div class="h">${d}</div>`).join("") + '<div></div>'.repeat(first.getDay());
-  for (let d = 1; d <= n; d++) { const iso = `${month}-${String(d).padStart(2, "0")}`; const [cls, txt] = cell(iso); h += `<div class="d ${esc(cls)}"><b>${d}</b><small>${esc(txt)}</small></div>`; }
-  return `<div class="cal">${h}</div>`;
-}
-const monthPicker = (id, v) => `<label for="${id}">Month</label><input id="${id}" type="month" value="${v}" style="max-width:200px">`;
-const thisMonth = () => new Date().toISOString().slice(0, 7);
-P["leave-calendar"] = async el => {
-  const draw = async mo => {
-    const c = await api("leave/calendar?month=" + mo);
-    const on = (rows, iso) => rows.filter(r => r.from_date <= iso && r.to_date >= iso);
-    el.innerHTML = `<h1>Leave Calendar</h1><div class="card">${monthPicker("mo", mo)}<br><br>${calendar(mo, iso => {
-      const mine = on(c.mine, iso), team = on(c.team, iso), h = c.holidays.find(x => x.date === iso);
-      return [mine.length ? "CL" : h ? "H" : "", [mine.length ? "Me: " + mine[0].code : "", h ? h.name : "", ...team.map(t => t.name.split(" ")[0])].filter(Boolean).join(" · ")];
-    })}</div>`;
-    $("#mo").onchange = e => e.target.value && draw(e.target.value);
-  };
-  draw(thisMonth());
-};
-P.holidays = async el => {
-  const h = await api("holidays");
-  el.innerHTML = `<h1>Holiday Calendar</h1><div class="card">${table([["Date", r => fdate(r.date)], ["Holiday", r => r.name], ["Type", r => r.restricted ? "Restricted (optional)" : "Public"]], h)}</div>`;
-};
+// Leave pages (Leave Apply, Leave Balances, Leave Calendar, Holiday Calendar) live in pages-leave.js
+const thisMonth = () => new Date().toISOString().slice(0, 7);   // used by the HR Admin attendance tabs
+
 
 // Attendance pages (Attendance Info, My Regularizations, Regularization & Permission) live in pages-attendance.js
 

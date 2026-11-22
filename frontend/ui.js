@@ -67,6 +67,24 @@ function openDialog(title, html, opts = {}) {
 function closeDialog() { const d = $("#dlg"); if (d) d.remove(); }
 if (!window.__dlgEsc) { window.__dlgEsc = true; document.addEventListener("keydown", e => { if (e.key === "Escape") closeDialog(); }); }
 
+// approvers offered in "Applying to": the reporting manager first, then the backup approvers
+function approverList(info) {
+  const out = [];
+  if (info.manager) out.push({ id: info.manager.id, name: info.manager.name, label: "Manager" });
+  (info.backups || []).forEach(b => out.push({ id: b.id, name: b.name, label: b.role.toUpperCase() }));
+  return out;
+}
+const fmtComma = iso => { const d = new Date(String(iso).slice(0, 10) + "T00:00"); return isNaN(d) ? "-" : `${pad2(d.getDate())} ${d.toLocaleDateString("en-GB", { month: "short" })}, ${d.getFullYear()}`; };
+function downloadCsv(name, rows) {
+  const csv = rows.map(r => r.map(v => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }));
+  a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+// financial year (April to March) as "2026 - 2027"
+const fyStart = iso => +iso.slice(5, 7) >= 4 ? +iso.slice(0, 4) : +iso.slice(0, 4) - 1;
+const fyLabel = y => `${y} - ${y + 1}`;
+
 // ---- grey line drawings for empty states ----
 const lineSvg = (vb, inner) => `<svg viewBox="${vb}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
 Object.assign(ART, {

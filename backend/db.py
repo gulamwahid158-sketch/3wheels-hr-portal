@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS leave_grants(id INT AUTO_INCREMENT PRIMARY KEY, emp_i
 CREATE TABLE IF NOT EXISTS requests(
  id INT AUTO_INCREMENT PRIMARY KEY, emp_id INT, kind VARCHAR(20), code VARCHAR(10), from_date VARCHAR(10), to_date VARCHAR(10),
  from_session INT DEFAULT 1, to_session INT DEFAULT 2, days DOUBLE, reason TEXT, status VARCHAR(20) DEFAULT 'pending',
- ref_id INT, approver_id INT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, decided_at VARCHAR(40), remark TEXT,
+ ref_id INT, approver_id INT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, decided_at VARCHAR(40), remark TEXT, contact VARCHAR(120),
  INDEX idx_req_emp(emp_id), INDEX idx_req_approver(approver_id, status));
 CREATE TABLE IF NOT EXISTS holidays(date VARCHAR(10) PRIMARY KEY, name VARCHAR(100), restricted TINYINT DEFAULT 0);
 CREATE TABLE IF NOT EXISTS attendance(emp_id INT, date VARCHAR(10), status VARCHAR(5), first_in VARCHAR(5), last_out VARCHAR(5), PRIMARY KEY(emp_id, date));
@@ -318,6 +318,10 @@ def ensure_columns(c):
     for name, typ in EMPLOYEE_EXTRA_COLUMNS:
         if name not in existing:
             c.execute("ALTER TABLE employees ADD COLUMN %s %s" % (name, typ))
+    # columns added to older tables after they were first created
+    req_cols = {r["Field"] for r in c.execute("SHOW COLUMNS FROM requests").fetchall()}
+    if "contact" not in req_cols:
+        c.execute("ALTER TABLE requests ADD COLUMN contact VARCHAR(120)")
 
 
 def _drop_all_tables(c):

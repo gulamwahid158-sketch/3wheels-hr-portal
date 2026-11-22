@@ -271,8 +271,8 @@ def leave_apply(u):
         bal = next(b for b in balances(u["id"]) if b["code"] == j["code"])["balance"]
         if days > bal: raise ValueError("Insufficient %s balance (%.1f available, %.1f requested)" % (t["name"], bal, days))
     approver = int(j.get("approver_id") or approver_of(u))
-    rid = run("INSERT INTO requests(emp_id,kind,code,from_date,to_date,from_session,to_session,days,reason,approver_id) VALUES(?,?,?,?,?,?,?,?,?,?)",
-              (u["id"], "leave", j["code"], j["from_date"], j["to_date"], fs, ts, days, j["reason"], approver))
+    rid = run("INSERT INTO requests(emp_id,kind,code,from_date,to_date,from_session,to_session,days,reason,approver_id,contact) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+              (u["id"], "leave", j["code"], j["from_date"], j["to_date"], fs, ts, days, j["reason"], approver, str(j.get("contact") or "").strip()[:120] or None))
     notify(approver, "%s applied for %s leave (%.1f day(s))" % (u["name"], t["name"], days))
     return jsonify(id=rid, days=days)
 
@@ -286,7 +286,7 @@ def rh_apply(u):
     if q("SELECT COUNT(*) c FROM requests WHERE emp_id=? AND kind='rh' AND status IN('pending','approved')", (u["id"],), one=True)["c"] >= 2:
         raise ValueError("Restricted holiday limit (2) reached")
     rid = run("INSERT INTO requests(emp_id,kind,code,from_date,to_date,days,reason,approver_id) VALUES(?,?,?,?,?,?,?,?)",
-              (u["id"], "rh", "RH", j["date"], j["date"], 0, j["reason"], approver_of(u)))
+              (u["id"], "rh", "RH", j["date"], j["date"], 0, j["reason"], int(j.get("approver_id") or approver_of(u))))
     return jsonify(id=rid)
 
 
@@ -298,7 +298,7 @@ def compoff_grant(u):
     if not a or a["status"] not in ("O", "H") or not a["first_in"]:
         raise ValueError("Comp-off needs work recorded on an off day or holiday")
     rid = run("INSERT INTO requests(emp_id,kind,code,from_date,to_date,days,reason,approver_id) VALUES(?,?,?,?,?,?,?,?)",
-              (u["id"], "compoff_grant", "CO", j["date"], j["date"], 1, j["reason"], approver_of(u)))
+              (u["id"], "compoff_grant", "CO", j["date"], j["date"], 1, j["reason"], int(j.get("approver_id") or approver_of(u))))
     return jsonify(id=rid)
 
 
@@ -315,7 +315,7 @@ def leave_cancel(u):
     if q("SELECT id FROM requests WHERE kind='cancel' AND ref_id=? AND status='pending'", (r["id"],), one=True):
         raise ValueError("Cancellation already requested")
     rid = run("INSERT INTO requests(emp_id,kind,code,from_date,to_date,days,reason,ref_id,approver_id) VALUES(?,?,?,?,?,?,?,?,?)",
-              (u["id"], "cancel", r["code"], r["from_date"], r["to_date"], r["days"], j["reason"], r["id"], approver_of(u)))
+              (u["id"], "cancel", r["code"], r["from_date"], r["to_date"], r["days"], j["reason"], r["id"], int(j.get("approver_id") or approver_of(u))))
     return jsonify(id=rid, status="pending")
 
 

@@ -248,6 +248,15 @@ def test_hr_member_management_attendance_and_leave_approval():
     assert history_item["status"] == "approved"
     assert history_item["decider_name"] == "Vikram Sen"
 
+def test_leave_contact_and_chosen_approver():
+    k = login("komal@example.com")
+    mid = next(p["id"] for p in k.get("/api/people").get_json() if p["email"] == "manager@example.com")
+    r = k.post("/api/leave/apply", json={"code": "LOP", "from_date": "2027-03-01", "to_date": "2027-03-01", "reason": "x", "contact": "9999", "approver_id": mid})
+    assert r.status_code == 200
+    row = next(x for x in k.get("/api/leave/requests").get_json() if x["id"] == r.get_json()["id"])
+    assert row["contact"] == "9999" and row["approver_id"] == mid
+    assert k.post("/api/leave/rh", json={"date": "2027-03-03", "reason": "Holi", "approver_id": mid}).status_code == 200  # restricted holiday can name its approver too
+
 def test_engage_feed_reactions_and_birthdays():
     import datetime
     k = login("komal@example.com")
