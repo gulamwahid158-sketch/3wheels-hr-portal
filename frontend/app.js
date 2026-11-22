@@ -395,29 +395,8 @@ P.feedback = async el => {
   draw();
 };
 
-P.tasks = async el => {
-  const draw = async () => {
-    const t = await api("tasks");
-    el.innerHTML = `<h1>Tasks</h1><div class="card">${form("tf", [{ n: "title", label: "Task" }, { n: "priority", label: "Priority", type: "select", opts: [["low", "Low"], ["medium", "Medium"], ["high", "High"]] }, { n: "due_date", label: "Due", type: "date", req: false }], "Add task")}</div>
-    <div class="card">${table([["", r => `<input type="checkbox" style="width:auto" data-done="${r.id}" ${r.done ? "checked" : ""} aria-label="Done">`, 1], ["Task", r => r.done ? `<s>${esc(r.title)}</s>` : esc(r.title), 1], ["Priority", r => r.priority], ["Due", r => fdate(r.due_date)], ["", r => `<button class="btn sec sm" data-del="${r.id}">Delete</button>`, 1]], t)}</div>`;
-    wire("tf", "tasks", draw);
-    el.querySelectorAll("[data-done]").forEach(c => c.onchange = async () => { await api("tasks/" + c.dataset.done, "PATCH", { done: c.checked }); draw(); });
-    el.querySelectorAll("[data-del]").forEach(c => c.onclick = async () => { await api("tasks/" + c.dataset.del, "DELETE"); draw(); });
-  };
-  draw();
-};
+// Tasks and Review live in pages-todo.js
 
-const desc = r => r.type === "request" ? `${r.kind === "cancel" ? "Cancel " : ""}${r.kind} ${r.code} ${r.from_date}→${r.to_date} (${r.days}d): ${r.reason || ""}`
-  : r.type === "regularization" ? `${r.kind} ${r.date} ${r.in_time || ""}-${r.out_time || ""}: ${r.reason}`
-  : r.type === "reimbursement" ? `${r.category} ${inr(r.amount)} (${r.bill_date})` : `Loan ${inr(r.amount)} for ${r.tenure_months} months`;
-P.review = async el => {
-  const draw = async () => {
-    const r = await api("review");
-    el.innerHTML = `<h1>Review</h1><div class="card">${table([["Employee", x => x.emp_name], ["Type", x => x.type], ["Details", x => desc(x)], ["", x => `<button class="btn sm" data-a="approve" data-t="${x.type}" data-i="${x.id}">Approve</button> <button class="btn bad sm" data-a="reject" data-t="${x.type}" data-i="${x.id}">Reject</button>`, 1]], r, "Hurrah! You've nothing to review.")}</div>`;
-    el.querySelectorAll("[data-a]").forEach(b => b.onclick = async () => { try { await api(`review/${b.dataset.t}/${b.dataset.i}`, "POST", { action: b.dataset.a }); toast("Done"); refreshMe(); draw(); } catch (e) { toast(e.message); } });
-  };
-  draw();
-};
 
 // ---- salary
 P.payslips = async el => {

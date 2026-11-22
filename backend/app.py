@@ -750,7 +750,50 @@ def pending_reviews(u):
 
 @app.get("/api/review")
 @auth()
-def review(u): return jsonify(pending_reviews(u))
+def review(u):
+    """Review inbox. ?status=active (default) is what waits for the caller; ?status=closed is what the
+    caller already decided. HR and leadership also see resignations and helpdesk tickets here."""
+    if request.args.get("status") == "closed":
+        return jsonify(closed_reviews(u))
+    out = pending_reviews(u)
+    if u["role"] in ADMIN_ROLES:
+        for r in q("SELECT r.*, e.name emp_name, e.department, e.designation FROM resignations r JOIN employees e ON e.id=r.emp_id WHERE r.status='pending' ORDER BY r.id DESC"):
+            r["type"] = "resignation"; out.append(r)
+        for t in q("SELECT t.*, e.name emp_name FROM tickets t JOIN employees e ON e.id=t.emp_id WHERE t.status IN ('open','in_progress') ORDER BY t.id DESC"):
+            t["type"] = "ticket"; out.append(t)
+    return jsonify(out)
+
+
+def closed_reviews(u):
+    ids = approver_ids(u); ph = ",".join("?" * len(ids)); out = []
+    for r in q("SELECT r.*, e.name emp_name FROM requests r JOIN employees e ON e.id=r.emp_id WHERE r.approver_id IN (%s) AND r.status IN ('approved','rejected') ORDER BY r.id DESC LIMIT 200" % ph, ids):
+        r["type"] = "request"; out.append(r)
+    for r in q("SELECT r.*, e.name emp_name FROM regularizations r JOIN employees e ON e.id=r.emp_id WHERE r.approver_id IN (%s) AND r.status IN ('approved','rejected') ORDER BY r.id DESC LIMIT 200" % ph, ids):
+        r["type"] = "regularization"; out.append(r)
+    for t, n in (("reimbursements", "reimbursement"), ("loans", "loan")):
+        for r in q("SELECT r.*, e.name emp_name FROM %s r JOIN employees e ON e.id=r.emp_id WHERE r.approver_id IN (%s) AND r.status IN ('approved','rejected') ORDER BY r.id DESC LIMIT 200" % (t, ph), ids):
+            r["type"] = n; out.append(r)
+    if u["role"] in ADMIN_ROLES:
+        for r in q("SELECT r.*, e.name emp_name, e.department, e.designation FROM resignations r JOIN employees e ON e.id=r.emp_id WHERE r.status<>'pending' ORDER BY r.id DESC LIMIT 200"):
+            r["type"] = "resignation"; out.append(r)
+        for t in q("SELECT t.*, e.name emp_name FROM tickets t JOIN employees e ON e.id=t.emp_id WHERE t.status IN ('resolved','closed') ORDER BY t.id DESC LIMIT 200"):
+            t["type"] = "ticket"; out.append(t)
+    return out
+
+
+@app.post("/api/admin/resignations/<int:rid>")
+@auth(ADMIN_ROLES)
+def a_resignation(u, rid):
+    j = body("action")
+    if j["action"] not in ("approve", "reject"): raise ValueError("Invalid action")
+    r = q("SELECT r.*, e.role emp_role FROM resignations r JOIN employees e ON e.id=r.emp_id WHERE r.id=? AND r.status='pending'", (rid,), one=True)
+    if not r: return jsonify(error="Resignation not found or already decided"), 404
+    if r["emp_id"] == u["id"]: return jsonify(error="Cannot decide your own resignation"), 400
+    if u["role"] in HR_LIKE_ROLES and r["emp_role"] in EXEC_ROLES: return jsonify(error="HR cannot decide executive requests"), 403
+    st = "approved" if j["action"] == "approve" else "rejected"
+    run("UPDATE resignations SET status=? WHERE id=?", (st, rid))
+    notify(r["emp_id"], "Your resignation was %s by %s" % (st, u["name"]))
+    return jsonify(status=st)
 
 
 def execute_decision(table, typ, r, rid, action, decider):

@@ -257,6 +257,26 @@ def test_leave_contact_and_chosen_approver():
     assert row["contact"] == "9999" and row["approver_id"] == mid
     assert k.post("/api/leave/rh", json={"date": "2027-03-03", "reason": "Holi", "approver_id": mid}).status_code == 200  # restricted holiday can name its approver too
 
+def test_review_inbox_active_closed_resignations_and_tickets():
+    k, m, ceo = login("komal@example.com"), login("manager@example.com"), login("ceo@example.com")
+    rid = k.post("/api/leave/apply", json={"code": "LOP", "from_date": "2027-04-05", "to_date": "2027-04-05", "reason": "x"}).get_json()["id"]
+    k.post("/api/resignation", json={"last_day": "2027-06-30", "reason": "Moving on"})
+    k.post("/api/tickets", json={"category": "IT", "subject": "Mouse", "body": "Broken mouse"})
+    active = m.get("/api/review").get_json()
+    assert any(i["type"] == "request" and i["id"] == rid for i in active)
+    assert not any(i["type"] in ("resignation", "ticket") for i in active)          # manager is not an admin
+    assert not any(i["type"] == "request" and i["id"] == rid for i in m.get("/api/review?status=closed").get_json())
+    assert m.post("/api/review/request/%d" % rid, json={"action": "approve"}).status_code == 200
+    assert any(i["type"] == "request" and i["id"] == rid and i["status"] == "approved" for i in m.get("/api/review?status=closed").get_json())
+    admin_view = ceo.get("/api/review").get_json()
+    res = next(i for i in admin_view if i["type"] == "resignation" and i["emp_name"] == "Komal Tiwari")
+    assert any(i["type"] == "ticket" and i["subject"] == "Mouse" for i in admin_view)
+    assert m.post("/api/admin/resignations/%d" % res["id"], json={"action": "approve"}).status_code == 403   # needs an admin role
+    assert ceo.post("/api/admin/resignations/%d" % res["id"], json={"action": "approve"}).status_code == 200
+    assert ceo.post("/api/admin/resignations/%d" % res["id"], json={"action": "approve"}).status_code == 404  # already decided
+    assert any(i["type"] == "resignation" and i["status"] == "approved" for i in ceo.get("/api/review?status=closed").get_json())
+    assert not any(i["type"] == "resignation" for i in ceo.get("/api/review").get_json())
+
 def test_engage_feed_reactions_and_birthdays():
     import datetime
     k = login("komal@example.com")
