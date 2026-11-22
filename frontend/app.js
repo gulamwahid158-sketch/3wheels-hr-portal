@@ -1389,10 +1389,7 @@ async function refreshMe() { try { ME = await api("me"); const b = $("#bellcount
 function render() {
   const app = $("#app");
   if (!ME) {
-    app.innerHTML = `${themeBtn("theme-float")}<div class="login card"><div class="login-brand"><img src="assets/logo.png" alt="3Wheels AI"></div><h1>3Wheels AI</h1><p class="mute">Sign in to your 3Wheels AI workspace</p>${form("lg", [{ n: "email", label: "Email", type: "email", value: "ceo@example.com" }, { n: "password", label: "Password", type: "password", value: "demo123" }], "Sign in")}
-    <p class="mute" style="font-size:12px;line-height:1.6">Demo logins (password: <b>demo123</b>):<br>
-    <b>Executives:</b> ceo@ · coo@ · cpo@example.com<br>
-    <b>HR & Staff:</b> hr@ · manager@ · komal@example.com</p></div>`;
+    app.innerHTML = `${themeBtn("theme-float")}<div class="login card"><div class="login-brand"><img src="assets/logo.png" alt="3Wheels AI"></div><h1>3Wheels AI</h1><p class="mute">Sign in to your 3Wheels AI workspace</p>${form("lg", [{ n: "email", label: "Email", type: "email", placeholder: "name@3wheels.ai" }, { n: "password", label: "Password", type: "password" }], "Sign in")}</div>`;
     bindTheme();
     $("#lg").onsubmit = async e => { e.preventDefault(); try { await api("login", "POST", Object.fromEntries(new FormData(e.target))); await refreshMe(); location.hash = ["ceo", "coo", "cpo"].includes(ME.role) ? "#/executive" : "#/home"; render(); } catch (er) { $("#lg-err").textContent = er.message; } };
     return;
