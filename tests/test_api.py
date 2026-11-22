@@ -107,6 +107,8 @@ def test_admin():
     assert h.post("/api/admin/leave-grant", json={"emp_id": 3, "code": "CL", "days": 2}).status_code == 200
     assert next(x for x in k.get("/api/leave/balances").get_json() if x["code"] == "CL")["granted"] == 18
     assert h.post("/api/admin/leave-grant", json={"emp_id": 3, "code": "CL", "days": -100}).status_code == 400
+    assert h.post("/api/admin/leave-grant", json={"emp_id": 3, "code": "CO", "days": 1}).status_code == 200  # comp off can be granted too
+    assert next(x for x in k.get("/api/leave/balances").get_json() if x["code"] == "CO")["granted"] == 4.5
     assert h.post("/api/admin/holidays", json={"date": "2027-08-15", "name": "Independence Day"}).status_code == 200
     assert h.post("/api/admin/holidays", json={"date": "bad", "name": "x"}).status_code == 400
 

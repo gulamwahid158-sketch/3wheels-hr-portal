@@ -956,7 +956,7 @@ P.admin = async el => {
         <p class="mute">Add or remove Casual Leaves for any member. Any adjustment made here is instantly visible to all members across the portal.</p>
         ${form("gl", [
           { n: "emp_id", label: "Select Employee", type: "select", opts: [["", "— Select Employee —"], ...clList.map(e => [e.emp_id, `${e.name} (${e.emp_no}) — Current CL: ${e.balance} days`])] },
-          { n: "code", label: "Leave Type", type: "select", opts: [["", "— Select Leave Type —"], ["CL", "Casual Leave (CL)"]] },
+          { n: "code", label: "Leave Type", type: "select", opts: [["", "— Select Leave Type —"], ["CL", "Casual Leave (CL)"], ["CO", "Comp Off (CO)"]] },
           { n: "days", label: "Days to Add (+) or Remove (-)", type: "number", step: "0.5", value: "1" }
         ], "Update Casual Leave Balance")}
       </div>
