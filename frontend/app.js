@@ -1405,7 +1405,7 @@ function render() {
       </section>
       <section class="login-panel">
         <div class="login card">
-          <div class="login-brand"><img src="assets/logo.png" alt="3Wheels AI"></div>
+          <div class="login-brand"><img src="assets/logo.png" alt=""><span>3Wheels AI</span></div>
           <h1>Welcome back</h1>
           <p class="mute login-sub">Sign in to your 3Wheels AI workspace</p>
           ${form("lg", [{ n: "email", label: "Work email", type: "email", placeholder: "name@3wheels.ai" }, { n: "password", label: "Password", type: "password", placeholder: "Enter your password" }], "Sign in")}
