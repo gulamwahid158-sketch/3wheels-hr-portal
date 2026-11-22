@@ -539,7 +539,7 @@ def people(u):
         r["team_members"] = team
 
         g = cl_grants.get(r["id"])
-        granted = g["granted"] if g else 16.0
+        granted = g["granted"] if g else 0.0
         opening = g["opening_used"] if g else 0.0
         used = cl_used.get(r["id"], 0.0)
         r["cl_balance"] = round(granted - (opening + used), 1)
@@ -894,7 +894,7 @@ def a_emp_add(u):
         ),
         tuple(vals),
     )
-    for code, g in (("CL", 16), ("CO", 0), ("LOP", 0)):
+    for code, g in (("CL", 0), ("CO", 0), ("LOP", 0)):  # every leave type starts at 0; HR grants days explicitly
         run("INSERT INTO leave_grants(emp_id,code,year,granted,opening_used) VALUES(?,?,?,?,0)", (eid, code, "2026-2027", g))
     notify(eid, "Welcome to 3Wheels AI! Your account is ready.")
     send_welcome_email(email, j["name"].strip(), emp_no, j["password"], role, j["designation"], j["department"])
@@ -1040,7 +1040,7 @@ def a_leave_balances(u):
     used_map = {row["emp_id"]: row["s"] for row in q("SELECT emp_id, COALESCE(SUM(days),0) s FROM requests WHERE code=? AND kind IN('leave','rh') AND status IN('approved','pending') GROUP BY emp_id", (code,))}
     out = []
     for e in emps:
-        g = grants.get(e["id"], {"granted": 16.0, "opening_used": 0.0})
+        g = grants.get(e["id"], {"granted": 0.0, "opening_used": 0.0})
         used = used_map.get(e["id"], 0.0)
         consumed = g["opening_used"] + used
         bal = round(g["granted"] - consumed, 1)

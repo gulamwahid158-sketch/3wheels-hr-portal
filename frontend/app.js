@@ -989,7 +989,7 @@ P.admin = async el => {
             </select>
           </div>
           <div><label for="cl-bulk-days">CL days</label>
-            <input id="cl-bulk-days" type="number" step="0.5" min="0" max="365" style="max-width:170px" value="16" placeholder="e.g. 16">
+            <input id="cl-bulk-days" type="number" step="0.5" min="0" max="365" style="max-width:170px" value="0" placeholder="e.g. 16">
           </div>
           <button class="btn" id="cl-bulk-apply" style="background:#1d6f42;color:#fff;border-color:#1d6f42">Apply to All Employees</button>
         </div>

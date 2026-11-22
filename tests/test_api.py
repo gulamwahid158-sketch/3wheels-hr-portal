@@ -96,6 +96,8 @@ def test_admin():
     assert next(e for e in h.get("/api/admin/employees").get_json() if e["id"] == eid)["phone"] == "9999999999"
     assert h.post("/api/admin/employees", json=new).status_code == 400  # duplicate email
     n = A.app.test_client(); assert n.post("/api/login", json={"email": "t@example.com", "password": "longenough1"}).status_code == 200
+    assert all(x["granted"] == 0 and x["balance"] == 0 for x in n.get("/api/leave/balances").get_json())  # new employees start with 0 leave
+    assert next(p for p in h.get("/api/people").get_json() if p["id"] == eid)["cl_balance"] == 0
     assert h.patch("/api/admin/employees/%d" % eid, json={"active": False}).status_code == 200
     assert n.get("/api/me").status_code == 401  # deactivated -> existing session dead
     assert A.app.test_client().post("/api/login", json={"email": "t@example.com", "password": "longenough1"}).status_code == 401
