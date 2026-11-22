@@ -1,0 +1,9 @@
+.env
+venv/
+__pycache__/
+.pytest_cache/
+backend/uploads/
+backend/peopledesk.db
+
+# Original greythr portal dumps (contain real employee data) — kept local only
+reference/
