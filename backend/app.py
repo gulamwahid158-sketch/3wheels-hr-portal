@@ -695,9 +695,37 @@ def feedback_list(u):
 @auth()
 def feedback_give(u):
     j = body("to_id", "message")
-    run("INSERT INTO feedback(from_id,to_id,message) VALUES(?,?,?)", (u["id"], j["to_id"], j["message"]))
-    notify(int(j["to_id"]), "You received new feedback")
+    to_id = int(j["to_id"])
+    if to_id == u["id"]: raise ValueError("You cannot give feedback to yourself")
+    if not q("SELECT id FROM employees WHERE id=? AND active=1", (to_id,), one=True): raise ValueError("Employee not found")
+    run("INSERT INTO feedback(from_id,to_id,message) VALUES(?,?,?)", (u["id"], to_id, j["message"]))
+    if j.get("request_id"):  # answering someone's feedback request
+        run("UPDATE feedback_requests SET status='answered', answered_at=? WHERE id=? AND to_id=? AND from_id=? AND status='pending'",
+            (datetime.now().isoformat(), int(j["request_id"]), u["id"], to_id))
+    notify(to_id, "You received new feedback")
     return jsonify(ok=True)
+
+
+@app.get("/api/feedback-requests")
+@auth()
+def feedback_requests_list(u):
+    return jsonify(
+        sent=q("SELECT r.*, e.name to_name FROM feedback_requests r JOIN employees e ON e.id=r.to_id WHERE r.from_id=? ORDER BY r.id DESC", (u["id"],)),
+        received=q("SELECT r.*, e.name from_name FROM feedback_requests r JOIN employees e ON e.id=r.from_id WHERE r.to_id=? ORDER BY r.id DESC", (u["id"],)))
+
+
+@app.post("/api/feedback-requests")
+@auth()
+def feedback_request_add(u):
+    j = body("to_id", "message")
+    to_id = int(j["to_id"])
+    if to_id == u["id"]: raise ValueError("You cannot request feedback from yourself")
+    if not q("SELECT id FROM employees WHERE id=? AND active=1", (to_id,), one=True): raise ValueError("Employee not found")
+    if q("SELECT id FROM feedback_requests WHERE from_id=? AND to_id=? AND status='pending'", (u["id"], to_id), one=True):
+        raise ValueError("You already have a pending request with this person")
+    rid = run("INSERT INTO feedback_requests(from_id,to_id,message) VALUES(?,?,?)", (u["id"], to_id, j["message"]))
+    notify(to_id, "%s requested your feedback" % u["name"])
+    return jsonify(id=rid)
 
 
 # ---------- tasks ----------

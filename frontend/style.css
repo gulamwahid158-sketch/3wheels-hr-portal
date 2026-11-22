@@ -752,3 +752,31 @@ button.btn.sec:hover{background:var(--brand-l)}
 .dc-back a{color:var(--brand);text-decoration:none}
 .dc-actions{display:flex;justify-content:flex-end;margin-bottom:12px}
 @media(max-width:1000px){.pd{grid-template-columns:1fr}.pd-top{flex-direction:column;gap:10px}.dc-hero{flex-direction:column}}
+
+
+/* ---- Kudos and Feedback ---- */
+.kd-list,.fb-list{display:grid;gap:14px;max-width:880px;margin:18px auto}
+.kd{display:flex;align-items:center;gap:18px;padding:16px 20px;border:1px solid var(--line);border-radius:6px;background:var(--card)}
+.kd-art{flex:none;width:70px;color:var(--ink)}
+.kd-art svg{display:block;width:100%;height:auto}
+.kd-t{margin:0 0 6px}
+.kd-m{margin:8px 0 6px}
+.fb-top{display:flex;justify-content:flex-end;gap:12px;margin-bottom:6px}
+.fb-top .btn{padding:9px 18px}
+.fb-card{padding:16px 20px;border:1px solid var(--line);border-radius:6px;background:var(--card)}
+.fb-card p{margin:6px 0 8px;white-space:pre-wrap;line-height:1.6}
+.fb-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.fb-actions{display:flex;align-items:center;justify-content:flex-end;gap:14px;margin-top:20px}
+.fb-actions .btn{padding:9px 24px}
+.fb-actions .btn:disabled{background:var(--line);color:var(--mute);cursor:not-allowed}
+.ep{position:relative;display:flex;align-items:center;gap:10px;max-width:340px;padding:4px 16px 4px 4px;border:1px solid var(--line);border-radius:99px;background:var(--card)}
+.ep-av{display:grid;place-items:center;flex:none;width:34px;height:34px;border-radius:50%;background:#aab4c6;color:#fff;overflow:hidden}
+.ep-av svg{width:20px;height:20px;fill:currentColor}
+.ep input{flex:1;padding:6px 0;border:0;background:none}
+.ep input:focus{outline:0;box-shadow:none}
+.ep-list{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:8;max-height:240px;overflow:auto;border:1px solid var(--line);border-radius:8px;background:var(--card);box-shadow:var(--shadow-md)}
+.ep-list[hidden]{display:none}
+.ep-list button{display:block;width:100%;padding:9px 14px;border:0;background:none;color:var(--ink);font:inherit;text-align:left;text-transform:none;cursor:pointer}
+.ep-list button:hover{background:var(--bg)}
+.ep-list small{color:var(--mute)}
+.ep-list p{margin:0;padding:10px 14px}

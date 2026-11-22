@@ -375,25 +375,8 @@ P.engage = async el => {
 
 
 async function peopleOpts() { return (await api("people")).filter(p => p.id !== ME.id).map(p => [p.id, p.name]); }
-P.kudos = async el => {
-  const draw = async () => {
-    const [k, ppl] = [await api("kudos"), await peopleOpts()];
-    el.innerHTML = `<h1>Kudos</h1><div class="card"><h2>Give kudos</h2>${form("kf", [{ n: "to_id", label: "To", type: "select", opts: ppl }, { n: "value", label: "Value", type: "select", opts: ["Ownership", "Teamwork", "Innovation", "Customer focus"].map(x => [x, x]) }, { n: "message", label: "Message", type: "textarea" }], "Give")}</div>
-    <div class="card">${table([["From", r => r.from_name], ["To", r => r.to_name], ["Value", r => r.value], ["Message", r => r.message], ["Date", r => fdate(r.created_at)]], k)}</div>`;
-    wire("kf", "kudos", draw);
-  };
-  draw();
-};
-P.feedback = async el => {
-  const draw = async () => {
-    const [f, ppl] = [await api("feedback"), await peopleOpts()];
-    el.innerHTML = `<h1>Feedback</h1><div class="card"><h2>Give feedback</h2>${form("ff", [{ n: "to_id", label: "To", type: "select", opts: ppl }, { n: "message", label: "Feedback", type: "textarea" }])}</div>
-    <div class="card"><h2>Received <span class="mute">(sender is anonymous)</span></h2>${table([["Feedback", r => r.message], ["Date", r => fdate(r.created_at)]], f.received)}</div>
-    <div class="card"><h2>Given</h2>${table([["To", r => r.to_name], ["Feedback", r => r.message], ["Date", r => fdate(r.created_at)]], f.given)}</div>`;
-    wire("ff", "feedback", draw);
-  };
-  draw();
-};
+// Kudos and Feedback live in pages-worklife.js
+
 
 // Tasks and Review live in pages-todo.js
 

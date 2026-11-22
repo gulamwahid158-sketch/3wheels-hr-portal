@@ -277,6 +277,22 @@ def test_review_inbox_active_closed_resignations_and_tickets():
     assert any(i["type"] == "resignation" and i["status"] == "approved" for i in ceo.get("/api/review?status=closed").get_json())
     assert not any(i["type"] == "resignation" for i in ceo.get("/api/review").get_json())
 
+def test_feedback_requests():
+    k, m = login("komal@example.com"), login("manager@example.com")
+    mid = next(p["id"] for p in k.get("/api/people").get_json() if p["email"] == "manager@example.com")
+    kid = next(p["id"] for p in m.get("/api/people").get_json() if p["email"] == "komal@example.com")
+    assert k.post("/api/feedback-requests", json={"to_id": kid, "message": "x"}).status_code == 400   # not yourself
+    r = k.post("/api/feedback-requests", json={"to_id": mid, "message": "How was my release?"}); assert r.status_code == 200
+    assert k.post("/api/feedback-requests", json={"to_id": mid, "message": "again"}).status_code == 400   # one pending at a time
+    req = k.get("/api/feedback-requests").get_json()
+    assert req["sent"][0]["to_name"] == "Vikram Sen" and req["sent"][0]["status"] == "pending"
+    got = m.get("/api/feedback-requests").get_json()["received"][0]
+    assert got["from_name"] == "Komal Tiwari" and got["message"] == "How was my release?"
+    assert m.post("/api/feedback", json={"to_id": kid, "message": "Solid work", "request_id": got["id"]}).status_code == 200
+    assert m.get("/api/feedback-requests").get_json()["received"][0]["status"] == "answered"
+    assert any(f["message"] == "Solid work" for f in k.get("/api/feedback").get_json()["received"])
+    assert m.post("/api/feedback", json={"to_id": mid, "message": "me"}).status_code == 400   # not to yourself
+
 def test_engage_feed_reactions_and_birthdays():
     import datetime
     k = login("komal@example.com")
