@@ -181,18 +181,30 @@ class _Result:
 class Conn:
     """Thin wrapper giving pymysql a sqlite3-like surface."""
 
+    # The raw connection runs in autocommit mode, so plain reads never leave a
+    # transaction open (no stale snapshot, no locks, and no extra network round
+    # trip to end one). A real transaction is started lazily on the first write
+    # and ended by commit()/rollback(), so multi-statement writes stay atomic.
     def __init__(self, raw, pooled=False):
         self._raw = raw
         self._pooled = pooled
         self._closed = False
+        self._txn = False
+
+    def _begin_if_write(self, sql):
+        if not self._txn and not sql.lstrip().lower().startswith(("select", "show")):
+            self._raw.begin()
+            self._txn = True
 
     def execute(self, sql, args=()):
+        self._begin_if_write(sql)
         cur = self._raw.cursor()
         cur.execute(_translate(sql, args), tuple(args) if args else None)
         return _Result(cur)
 
     def executemany(self, sql, seq):
         seq = [tuple(a) for a in seq]
+        self._begin_if_write(sql)
         cur = self._raw.cursor()
         if seq:
             cur.executemany(_translate(sql, seq[0]), seq)
@@ -204,10 +216,14 @@ class Conn:
                 self.execute(stmt.strip())
 
     def commit(self):
-        self._raw.commit()
+        if self._txn:
+            self._txn = False
+            self._raw.commit()
 
     def rollback(self):
-        self._raw.rollback()
+        if self._txn:
+            self._txn = False
+            self._raw.rollback()
 
     def close(self):
         """Pooled connections go back to the pool; others are really closed."""
@@ -216,7 +232,7 @@ class Conn:
         self._closed = True
         if self._pooled:
             try:
-                self._raw.rollback()  # end the read snapshot, drop any uncommitted work
+                self.rollback()  # only does anything if a write was left uncommitted
                 with _POOL_LOCK:
                     if len(_POOL) < _POOL_MAX:
                         _POOL.append((self._raw, time.time()))
@@ -245,7 +261,7 @@ def _connect(database=None):
         cfg["database"] = database
     if not cfg["database"]:
         cfg.pop("database")
-    return pymysql.connect(cursorclass=DictCursor, charset="utf8mb4", autocommit=False, **cfg)
+    return pymysql.connect(cursorclass=DictCursor, charset="utf8mb4", autocommit=True, **cfg)
 
 
 # Opening a MySQL connection is slow over the internet and hosted MySQL caps how

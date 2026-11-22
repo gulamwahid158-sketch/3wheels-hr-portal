@@ -11,10 +11,19 @@ async function api(path, method = "GET", data) {
   // 502/503/504 = server or database temporarily unavailable -> maintenance screen
   if ([502, 503, 504].includes(r.status)) { MAINT = true; render(); throw new Error("The portal is under maintenance"); }
   const j = await r.json().catch(() => ({}));
-  if (r.status === 401 && path !== "login") { ME = null; render(); throw new Error("Please log in"); }
+  if (r.status === 401 && path !== "login") { ME = null; tabAuth(false); render(); throw new Error("Please log in"); }
   if (!r.ok) throw new Error(j.error || "Request failed");
+  if (path === "login") tabAuth(true);
+  if (path === "logout") tabAuth(false);
   return j;
 }
+
+// "Logged in" is remembered only in this tab's sessionStorage, which the browser
+// clears when the tab or window is closed. So closing the tab ends the login:
+// the next visit starts at the sign-in page. (A reload keeps it, as it is the same tab.)
+function tabAuth(on) { try { on ? sessionStorage.setItem("tab_auth", "1") : sessionStorage.removeItem("tab_auth"); } catch { } }
+function tabAuthed() { try { return sessionStorage.getItem("tab_auth") === "1"; } catch { return true; } }
+async function bootMe() { if (!tabAuthed()) { ME = null; return; } await refreshMe(); }
 function toast(m) { const t = $("#toast"); t.textContent = m; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 2600); }
 const titleCase = s => String(s || "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 const badge = s => `<span class="badge ${esc(s)}">${esc(titleCase(s))}</span>`;
@@ -1392,7 +1401,7 @@ async function refreshMe() { try { ME = await api("me"); const b = $("#bellcount
 function retryAfterMaintenance() {
   clearTimeout(_maintTimer);
   MAINT = false;
-  checkHealth().then(refreshMe).then(render);  // a 503 here switches the maintenance screen straight back on
+  checkHealth().then(bootMe).then(render);  // a 503 here switches the maintenance screen straight back on
 }
 
 // Asks the server (and through it the database) if all is well; a 503 turns on the maintenance screen.
@@ -1467,7 +1476,7 @@ function render() {
   (P[route] || P.home)(page).catch(e => { page.innerHTML = `<div class="card err">${esc(e.message)}</div>`; });
 }
 window.addEventListener("hashchange", () => ME && render());
-checkHealth().then(refreshMe).then(render);
+checkHealth().then(bootMe).then(render);
 
 
 let _idle; function _resetIdle(){ clearTimeout(_idle); _idle=setTimeout(()=>{ api('logout','POST').finally(()=>{ ME=null; render(); }); }, 300000); } ['click','mousemove','keydown','scroll','touchstart'].forEach(e=>document.addEventListener(e,_resetIdle,{passive:true})); _resetIdle();
