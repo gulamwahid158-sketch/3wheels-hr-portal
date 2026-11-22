@@ -209,50 +209,162 @@ P.home = async el => {
   el.querySelectorAll("[data-go]").forEach(b => b.onclick = () => { location.hash = b.dataset.go; });
 };
 
+// ---------------- Engage: one feed of posts, polls, kudos and birthdays ----------------
+const REACTIONS = ["👍", "❤️", "🎉", "👏", "😮"];
+ART.cake = `<svg viewBox="0 0 120 90" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M10 14l14 6 14-6 14 6" opacity=".6"/>
+  <rect x="34" y="52" width="52" height="24" rx="4" fill="var(--accent)" fill-opacity=".3"/>
+  <path d="M34 62c8 6 10-4 17 0s10-4 17 0 12-4 18 0"/>
+  <path d="M60 52V40"/><path d="M60 40c-4-4 0-9 0-9s4 5 0 9z" fill="var(--accent)"/>
+  <path d="M96 24l3-5M104 36l6-2M16 46l-6-2"/><path d="M22 80h76"/></svg>`;
+ART.kudos = `<svg viewBox="0 0 90 90" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <circle cx="45" cy="34" r="20" fill="var(--accent)" fill-opacity=".3"/>
+  <path d="M45 24l3 7 8 1-6 5 2 8-7-4-7 4 2-8-6-5 8-1z"/>
+  <path d="M33 51l-8 24 11-5 5 9 5-25M57 51l8 24-11-5-5 9"/></svg>`;
+
+// "a day ago", "3 days ago" ... for feed items
+function timeAgo(it) {
+  const s = String(it.created_at || ""); if (!s) return "";
+  const d = new Date(s.length === 10 ? s + "T00:00" : s.replace(" ", "T"));
+  if (isNaN(d)) return fdate(s);
+  if (it.kind === "birthday") {
+    const day = x => new Date(x.getFullYear(), x.getMonth(), x.getDate());
+    const n = Math.round((day(new Date()) - day(d)) / 86400000);
+    return n <= 0 ? "Today" : n === 1 ? "Yesterday" : n + " days ago";
+  }
+  const mins = Math.floor((Date.now() - d) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} hour${hrs === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hrs / 24);
+  return days === 1 ? "a day ago" : days < 7 ? `${days} days ago` : fdate(s);
+}
+
 P.engage = async el => {
-  const draw = async () => {
-    const [feed, people] = [await api("feed"), await api("people")];
-    const today = new Date();
-    const md = d => (d.getMonth()+1).toString().padStart(2,"0")+"-"+d.getDate().toString().padStart(2,"0");
-    const todayMd = md(today);
-    const bdays = people.filter(p => p.dob).map(p => ({ name: p.name, dob: p.dob }));
-    const todayB = bdays.filter(b => b.dob === todayMd);
-    const upcoming = bdays.filter(b => {
-      if (b.dob === todayMd) return false;
-      const [m, dd] = b.dob.split("-").map(Number);
-      const d = new Date(today.getFullYear(), m-1, dd);
-      if (d < today) d.setFullYear(today.getFullYear()+1);
-      const diff = (d - today) / 86400000;
-      return diff > 0 && diff <= 7;
+  const F = { type: "all", q: "", group: "", location: "", department: "", sort: "newest" };
+  const expanded = new Set(["Groups"]);           // which filter sections are open
+  let items = [];
+  const canPost = ADMIN_ROLES.includes(ME.role);
+  const first = ME.name.split(" ")[0];
+  const initials = ME.name.split(" ").filter(Boolean).slice(0, 2).map(w => w[0]).join("").toUpperCase();
+  const GROUPS = ["Announcements", "Events", "Recognition"];
+  const ACTS = [["all", "All Activities", "▦"], ["kudos", "Kudos", "🏅"], ["polls", "Polls", "📊"], ["posts", "Posts", "📝"]];
+  const typeOf = it => it.kind === "kudos" ? "kudos" : it.kind === "poll" ? "polls" : "posts";
+  const uniq = k => [...new Set(items.map(i => i[k]).filter(Boolean))].sort();
+
+  const visible = () => {
+    const needle = F.q.trim().toLowerCase();
+    const rows = items.filter(it => {
+      if (F.type !== "all" && typeOf(it) !== F.type) return false;
+      if (F.group && it.group !== F.group) return false;
+      if (F.location && (it.location || "") !== F.location) return false;
+      if (F.department && (it.department || "") !== F.department) return false;
+      if (needle && ![it.body, it.author, it.from_name, it.to_name, it.value, it.options].filter(Boolean).join(" ").toLowerCase().includes(needle)) return false;
+      return true;
     });
-    const completed = bdays.filter(b => {
-      const [m, dd] = b.dob.split("-").map(Number);
-      const d = new Date(today.getFullYear(), m-1, dd);
-      if (d > today) return false;
-      const diff = (today - d) / 86400000;
-      return diff > 0 && diff <= 7;
-    });
-    const canPost = ADMIN_ROLES.includes(ME.role);
-    el.innerHTML = `<div class="engage-hero"><h1>Engage</h1><p class="mute">Share updates, kudos & polls with your team.</p></div>
-${todayB.length ? `<div class="bday-celebrate">🎂🎉 Happy Birthday ${todayB.map(b=>esc(b.name)).join(", ")}! 🎉🎂</div>` : ""}
-    <div class="bday-bar">
-      <div class="bday-col"><h3>🎂 Today's Birthday</h3>${todayB.length ? todayB.map(b=>`<span class="bday-chip today">${esc(b.name)}</span>`).join("") : '<span class="mute">None</span>'}</div>
-      <div class="bday-col"><h3>🎉 Upcoming Birthday</h3>${upcoming.length ? upcoming.map(b=>`<span class="bday-chip up">${esc(b.name)}</span>`).join("") : '<span class="mute">None</span>'}</div>
-    </div>
-    ${canPost ? `<div class="card engage-compose"><h2>✍️ Create post</h2><form id="pf"><textarea name="body" rows="3" required aria-label="Post text" placeholder="What's on your mind?"></textarea>
-      <label>Poll options (comma separated, leave empty for a normal post)</label><input name="opts" aria-label="Poll options" placeholder="Option 1, Option 2"><p class="err" id="pf-err"></p><button class="btn">Post</button></form></div>` : ""}
-    ${feed.map(p => `<div class="card engage-post"><div class="post-head"><div class="avatar sm">${esc(p.author[0])}</div><div><b>${esc(p.author)}</b><br><span class="mute">${fdate(p.created_at)}</span></div></div><p class="post-body">${esc(p.body)}</p>
-      ${p.type === "poll" ? `<div class="poll">${p.options.split("|").map(o => { const c = p.results[o] || 0, tot = Object.values(p.results).reduce((a, b) => a + b, 0) || 1; return `<div class="poll-opt"><button class="btn sec sm" data-vote="${p.id}" data-o="${esc(o)}">${p.my_vote === o ? "✓ " : ""}${esc(o)}</button> <span class="mute">${c} vote(s)</span><div class="bar"><i style="width:${c / tot * 100}%"></i></div></div>`; }).join("")}</div>` : ""}</div>`).join("")}`;
-    if (canPost) {
-      $("#pf").onsubmit = async e => {
-        e.preventDefault(); const f = new FormData(e.target), opts = (f.get("opts") || "").split(",").map(s => s.trim()).filter(Boolean);
-        try { await api("feed", "POST", { body: f.get("body"), type: opts.length ? "poll" : "post", options: opts }); draw(); } catch (er) { $("#pf-err").textContent = er.message; }
-      };
-    }
-    el.querySelectorAll("[data-vote]").forEach(b => b.onclick = async () => { await api(`feed/${b.dataset.vote}/vote`, "POST", { option: b.dataset.o }); draw(); });
+    rows.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) * (F.sort === "oldest" ? 1 : -1));
+    return rows;
   };
-  draw();
+
+  const card = it => {
+    let inner = "";
+    if (it.kind === "post") inner = `<p class="fc-text">${esc(it.body)}</p>`;
+    else if (it.kind === "poll") {
+      const res = it.results || {}, total = Object.values(res).reduce((a, b) => a + b, 0) || 1;
+      inner = `<p class="fc-text">${esc(it.body)}</p><div class="poll">${(it.options || "").split("|").map(o => `<div class="poll-opt"><button class="btn sec sm" type="button" data-vote="${it.id}" data-o="${esc(o)}">${it.my_vote === o ? "✓ " : ""}${esc(o)}</button> <span class="mute">${res[o] || 0} vote(s)</span><div class="bar"><i style="width:${(res[o] || 0) / total * 100}%"></i></div></div>`).join("")}</div>`;
+    } else if (it.kind === "kudos") {
+      inner = `<div class="fc-feature"><div class="fc-art">${ART.kudos}</div><div><p class="fc-big">${esc(it.from_name)} gave kudos to ${esc(it.to_name)}</p><span class="badge">${esc(it.value)}</span><p class="fc-text">${esc(it.message)}</p></div></div>`;
+    } else {
+      inner = `<div class="fc-feature"><div class="fc-art">${ART.cake}</div><div><p class="mute fc-small">Happy Birthday ${esc(it.author)}, Have a great year ahead!</p><div class="fc-who"><span class="avatar sm">${esc(it.author[0])}</span><b class="fc-big">Happy Birthday, ${esc(it.author)}!</b></div></div></div>`;
+    }
+    const who = it.kind === "birthday" ? `<div class="fc-logo"><img src="assets/logo.png" alt=""></div><div><b>3Wheels AI</b><div class="mute fc-group">Group: ${esc(it.group)}</div></div>`
+      : `<div class="avatar">${esc((it.author || "?")[0])}</div><div><b>${esc(it.author)}</b><div class="mute fc-group">Group: ${esc(it.group)}</div></div>`;
+    const key = esc(it.key), mine = it.my_reaction;
+    return `<article class="card fc"><div class="fc-head"><div class="fc-who">${who}</div><span class="mute fc-time">${esc(timeAgo(it))}</span></div>${inner}
+      <div class="fc-foot"><div class="fc-rwrap"><button type="button" class="fc-react ${mine ? "on" : ""}" data-ropen>${mine || "☺"} Reaction</button>
+        <div class="fc-picker" hidden>${REACTIONS.map(e => `<button type="button" class="${mine === e ? "on" : ""}" data-react="${key}" data-e="${e}" aria-label="React ${e}">${e}</button>`).join("")}</div></div>
+        ${Object.entries(it.reactions || {}).map(([e, c]) => `<button type="button" class="fc-chip ${mine === e ? "mine" : ""}" data-react="${key}" data-e="${e}">${e} ${c}</button>`).join("")}</div></article>`;
+  };
+
+  const drawFeed = () => {
+    const rows = visible();
+    $("#eg-title").textContent = `${ACTS.find(a => a[0] === F.type)[1]} - ${F.group || "All Groups"}`;
+    $("#eg-list").innerHTML = rows.length ? rows.map(card).join("") : `<div class="card eg-none">Nothing here yet.</div>`;
+  };
+
+  const drawFilters = () => {
+    const radio = (name, val, label, icon = "") => `<label class="eg-opt ${F[name] === val ? "on" : ""}"><input type="radio" name="${name}" value="${esc(val)}" ${F[name] === val ? "checked" : ""}>${icon ? `<i>${icon}</i>` : ""}${esc(label)}</label>`;
+    const section = (title, name, opts) => `<details class="eg-sec" data-sec="${title}" ${expanded.has(title) ? "open" : ""}><summary>${title}</summary>${radio(name, "", "All")}${opts.map(o => radio(name, o, o)).join("")}</details>`;
+    const box = $("#eg-filters");
+    box.innerHTML = `<h3>Filters</h3><div class="eg-sub">Activities</div>${ACTS.map(a => radio("type", a[0], a[1], a[2])).join("")}
+      <div class="eg-search"><input id="eg-q" type="search" placeholder="Search" value="${esc(F.q)}" aria-label="Search the feed"></div>
+      ${section("Groups", "group", GROUPS)}${section("Location", "location", uniq("location"))}${section("Department", "department", uniq("department"))}`;
+    box.querySelectorAll("input[type=radio]").forEach(r => r.onchange = () => { F[r.name] = r.value; drawFilters(); drawFeed(); });
+    $("#eg-q").oninput = e => { F.q = e.target.value; drawFeed(); };
+    box.querySelectorAll("details").forEach(d => d.ontoggle = () => { d.open ? expanded.add(d.dataset.sec) : expanded.delete(d.dataset.sec); });
+  };
+
+  const load = async () => { items = await api("feed"); drawFilters(); drawFeed(); };
+
+  const setReaction = async (key, emoji) => {
+    const it = items.find(i => i.key === key); if (!it) return;
+    const same = it.my_reaction === emoji, rc = { ...(it.reactions || {}) };
+    if (it.my_reaction) { rc[it.my_reaction] = (rc[it.my_reaction] || 1) - 1; if (rc[it.my_reaction] <= 0) delete rc[it.my_reaction]; }
+    if (!same) rc[emoji] = (rc[emoji] || 0) + 1;
+    it.reactions = rc; it.my_reaction = same ? null : emoji; drawFeed();      // show it at once
+    try { await api("react", "POST", { key, emoji: same ? null : emoji }); } catch (er) { toast(er.message); await load(); }
+  };
+
+  const closeModal = () => { const m = $("#eg-modal"); if (m) m.remove(); };
+  const openModal = async kind => {
+    closeModal();
+    let title, html, endpoint, tweak;
+    if (kind === "kudos") {
+      title = "Give Kudos"; endpoint = "kudos"; tweak = d => ({ ...d, to_id: +d.to_id });
+      html = form("mf", [{ n: "to_id", label: "To", type: "select", opts: await peopleOpts() }, { n: "value", label: "Value", type: "select", opts: ["Ownership", "Teamwork", "Innovation", "Customer focus"].map(x => [x, x]) }, { n: "message", label: "Message", type: "textarea" }], "Give kudos");
+    } else if (kind === "poll") {
+      title = "Create Poll"; endpoint = "feed";
+      tweak = d => ({ body: d.body, type: "poll", options: String(d.options || "").split(/\r?\n|,/).map(s => s.trim()).filter(Boolean) });
+      html = form("mf", [{ n: "body", label: "Question", type: "textarea" }, { n: "options", label: "Options (one per line, 2 to 7)", type: "textarea" }], "Create poll");
+    } else {
+      title = "Create Post"; endpoint = "feed"; tweak = d => ({ body: d.body, type: "post" });
+      html = form("mf", [{ n: "body", label: "What do you want to share?", type: "textarea" }], "Post");
+    }
+    el.insertAdjacentHTML("beforeend", `<div class="modal-back" id="eg-modal"><div class="modal card" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="modal-head"><h2>${esc(title)}</h2><button type="button" class="btn sec sm" id="eg-mclose">Close</button></div>${html}</div></div>`);
+    $("#eg-mclose").onclick = closeModal;
+    $("#eg-modal").onclick = e => { if (e.target.id === "eg-modal") closeModal(); };
+    wire("mf", endpoint, async () => { closeModal(); await load(); }, tweak);
+    const firstField = $("#mf textarea, #mf select"); if (firstField) firstField.focus();
+  };
+  if (!window.__egEsc) { window.__egEsc = true; document.addEventListener("keydown", e => { if (e.key === "Escape") { const m = $("#eg-modal"); if (m) m.remove(); } }); }
+
+  el.innerHTML = `<div class="eg-wrap">
+    <section class="card eg-top"><div class="avatar big eg-av">${esc(initials)}</div>
+      <div class="eg-hey"><b>Hey ${esc(first)},</b><span class="mute">Ready to dive in ?</span></div>
+      <div class="eg-tiles">
+        <button class="eg-tile pink" type="button" data-open="kudos"><span>🏅</span>Give Kudos</button>
+        <button class="eg-tile teal" type="button" data-open="poll"><span>📊</span>Create Polls</button>
+        ${canPost ? '<button class="eg-tile violet" type="button" data-open="post"><span>📝</span>Create Post</button>' : ""}
+      </div></section>
+    <div class="eg-body"><aside class="card eg-filters" id="eg-filters"></aside>
+      <section class="eg-main"><div class="eg-bar"><span id="eg-title">All Activities - All Groups</span>
+        <label class="eg-sort">Sort: <select id="eg-sort"><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select></label></div>
+        <div id="eg-list"></div></section></div></div>`;
+  el.querySelectorAll("[data-open]").forEach(b => b.onclick = () => openModal(b.dataset.open));
+  $("#eg-sort").onchange = e => { F.sort = e.target.value; drawFeed(); };
+  $("#eg-list").onclick = async e => {
+    const toggler = e.target.closest("[data-ropen]");
+    $("#eg-list").querySelectorAll(".fc-picker:not([hidden])").forEach(p => { if (!toggler || p !== toggler.nextElementSibling) p.hidden = true; });
+    if (toggler) { const p = toggler.nextElementSibling; p.hidden = !p.hidden; return; }
+    const r = e.target.closest("[data-react]");
+    if (r) { await setReaction(r.dataset.react, r.dataset.e); return; }
+    const v = e.target.closest("[data-vote]");
+    if (v) { try { await api(`feed/${v.dataset.vote}/vote`, "POST", { option: v.dataset.o }); await load(); } catch (er) { toast(er.message); } }
+  };
+  await load();
 };
+
 
 async function peopleOpts() { return (await api("people")).filter(p => p.id !== ME.id).map(p => [p.id, p.name]); }
 P.kudos = async el => {

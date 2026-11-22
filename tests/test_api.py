@@ -248,6 +248,36 @@ def test_hr_member_management_attendance_and_leave_approval():
     assert history_item["status"] == "approved"
     assert history_item["decider_name"] == "Vikram Sen"
 
+def test_engage_feed_reactions_and_birthdays():
+    import datetime
+    k = login("komal@example.com")
+    # kudos appear in the single feed
+    kid = k.post("/api/kudos", json={"to_id": 4, "value": "Teamwork", "message": "Thanks"}).get_json()["id"]
+    feed = k.get("/api/feed").get_json()
+    kudos = next(i for i in feed if i["key"] == "kudos:%d" % kid)
+    assert kudos["kind"] == "kudos" and kudos["group"] == "Recognition" and kudos["to_name"] and kudos["reactions"] == {}
+    # a birthday today becomes an automatic post
+    today = datetime.date.today()
+    A.run("UPDATE employees SET dob=? WHERE id=5", ("1995-%02d-%02d" % (today.month, today.day),))
+    feed = k.get("/api/feed").get_json()
+    assert any(i["key"] == "bday:%s:5" % today.isoformat() and i["kind"] == "birthday" for i in feed)
+    # newest first
+    stamps = [str(i["created_at"]) for i in feed]
+    assert stamps == sorted(stamps, reverse=True)
+    # reactions: set, change, count, remove, and bad input
+    key = "kudos:%d" % kid
+    assert k.post("/api/react", json={"key": key, "emoji": "👍"}).status_code == 200
+    item = next(i for i in k.get("/api/feed").get_json() if i["key"] == key)
+    assert item["reactions"] == {"👍": 1} and item["my_reaction"] == "👍"
+    assert k.post("/api/react", json={"key": key, "emoji": "🎉"}).status_code == 200
+    item = next(i for i in k.get("/api/feed").get_json() if i["key"] == key)
+    assert item["reactions"] == {"🎉": 1} and item["my_reaction"] == "🎉"
+    assert k.post("/api/react", json={"key": key, "emoji": None}).status_code == 200
+    assert next(i for i in k.get("/api/feed").get_json() if i["key"] == key)["reactions"] == {}
+    assert k.post("/api/react", json={"key": key, "emoji": "💩"}).status_code == 400
+    assert k.post("/api/react", json={"key": "nonsense", "emoji": "👍"}).status_code == 400
+    assert A.app.test_client().post("/api/react", json={"key": key, "emoji": "👍"}).status_code == 401
+
 def test_new_roles_admin_and_executive():
     ceo = login("ceo@example.com")
     base = {"department": "Technical", "designation": "AI Engineer", "join_date": "2026-11-22", "password": "longenough1"}

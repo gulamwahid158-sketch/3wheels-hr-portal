@@ -576,17 +576,70 @@ def org(u): return jsonify(q("SELECT id,name,designation,manager_id,role,departm
 
 
 # ---------- engage ----------
+REACTION_EMOJIS = ("👍", "❤️", "🎉", "👏", "😮")
+_REACT_KEY = re.compile(r"^(post:\d+|kudos:\d+|bday:\d{4}-\d{2}-\d{2}:\d+)$")
+
+
 @app.get("/api/feed")
 @auth()
 def feed(u):
-    posts = q("SELECT p.*, e.name author FROM posts p JOIN employees e ON e.id=p.author_id ORDER BY p.id DESC")
-    for p in posts:
+    """One timeline for the Engage page: posts, polls, kudos and automatic birthday
+    posts (today and the last 7 days), newest first, each with its reactions."""
+    items = []
+
+    votes = {}
+    for v in q("SELECT post_id, `option`, COUNT(*) c FROM poll_votes GROUP BY post_id, `option`"):
+        votes.setdefault(v["post_id"], {})[v["option"]] = v["c"]
+    my_votes = {v["post_id"]: v["option"] for v in q("SELECT post_id, `option` FROM poll_votes WHERE emp_id=?", (u["id"],))}
+    for p in q("SELECT p.*, e.name author, e.location, e.department FROM posts p JOIN employees e ON e.id=p.author_id"):
+        item = dict(p, key="post:%d" % p["id"], kind=p["type"], group="Announcements")
         if p["type"] == "poll":
-            votes = q("SELECT `option`, COUNT(*) c FROM poll_votes WHERE post_id=? GROUP BY `option`", (p["id"],))
-            p["results"] = {v["option"]: v["c"] for v in votes}
-            mv = q("SELECT `option` FROM poll_votes WHERE post_id=? AND emp_id=?", (p["id"], u["id"]), one=True)
-            p["my_vote"] = mv["option"] if mv else None
-    return jsonify(posts)
+            item["results"] = votes.get(p["id"], {})
+            item["my_vote"] = my_votes.get(p["id"])
+        items.append(item)
+
+    for k in q("SELECT k.*, a.name from_name, b.name to_name, b.location, b.department FROM kudos k "
+               "JOIN employees a ON a.id=k.from_id JOIN employees b ON b.id=k.to_id"):
+        items.append(dict(k, key="kudos:%d" % k["id"], kind="kudos", group="Recognition", author=k["from_name"], body=k["message"]))
+
+    today = date.today()
+    for e in q("SELECT id, name, dob, location, department FROM employees WHERE active=1 AND dob IS NOT NULL AND dob<>''"):
+        for year in (today.year, today.year - 1):  # a birthday just before New Year is still recent in January
+            try:
+                when = date(year, int(e["dob"][5:7]), int(e["dob"][8:10]))
+            except (ValueError, IndexError):
+                break
+            if 0 <= (today - when).days <= 7:
+                items.append(dict(key="bday:%s:%d" % (when.isoformat(), e["id"]), kind="birthday", group="Events",
+                                  id=e["id"], author=e["name"], body="", created_at=when.isoformat() + " 00:00:00",
+                                  location=e["location"], department=e["department"]))
+                break
+
+    counts = {}
+    for r in q("SELECT item_key, emoji, COUNT(*) c FROM reactions GROUP BY item_key, emoji"):
+        counts.setdefault(r["item_key"], {})[r["emoji"]] = r["c"]
+    mine = {r["item_key"]: r["emoji"] for r in q("SELECT item_key, emoji FROM reactions WHERE emp_id=?", (u["id"],))}
+    for it in items:
+        it["reactions"] = counts.get(it["key"], {})
+        it["my_reaction"] = mine.get(it["key"])
+
+    items.sort(key=lambda x: str(x["created_at"]), reverse=True)
+    return jsonify(items[:200])
+
+
+@app.post("/api/react")
+@auth()
+def react(u):
+    """Set, change or (with an empty emoji) remove the caller's reaction on a feed item."""
+    j = body("key")
+    key, emoji = str(j["key"]), j.get("emoji")
+    if not _REACT_KEY.match(key): raise ValueError("Invalid item")
+    if emoji in (None, ""):
+        run("DELETE FROM reactions WHERE item_key=? AND emp_id=?", (key, u["id"]))
+        return jsonify(ok=True)
+    if emoji not in REACTION_EMOJIS: raise ValueError("Invalid reaction")
+    run("REPLACE INTO reactions(item_key,emp_id,emoji) VALUES(?,?,?)", (key, u["id"], emoji))
+    return jsonify(ok=True)
 
 
 @app.post("/api/feed")
