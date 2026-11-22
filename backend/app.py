@@ -22,9 +22,10 @@ app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
 from werkzeug.middleware.proxy_fix import ProxyFix
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
-EXEC_ROLES = ("ceo", "coo", "cpo", "superadmin")
-ADMIN_ROLES = ("hr", "ceo", "coo", "cpo", "superadmin")
-ROLES = ("employee", "manager", "hr", "ceo", "coo", "cpo", "superadmin")
+EXEC_ROLES = ("ceo", "coo", "cpo", "executive", "superadmin")   # leadership tier
+HR_LIKE_ROLES = ("hr", "admin")                                  # manage people, never executive accounts
+ADMIN_ROLES = HR_LIKE_ROLES + ("ceo", "coo", "cpo", "executive", "superadmin")
+ROLES = ("employee", "manager", "hr", "admin", "ceo", "coo", "cpo", "executive", "superadmin")
 EMP_EXTRA_FIELDS = tuple(name for name, _ in db.EMPLOYEE_EXTRA_COLUMNS)
 
 
@@ -206,8 +207,8 @@ def approval_info(u):
         if m: manager = {"id": m["id"], "name": m["name"], "designation": m["designation"]}
     backups = q("""
         SELECT id, name, role, designation FROM employees
-        WHERE active=1 AND id!=? AND role IN ('hr','ceo','coo','cpo')
-        ORDER BY CASE role WHEN 'hr' THEN 0 WHEN 'ceo' THEN 1 WHEN 'coo' THEN 2 WHEN 'cpo' THEN 3 ELSE 4 END, name
+        WHERE active=1 AND id!=? AND role IN ('hr','admin','ceo','coo','cpo','executive')
+        ORDER BY CASE role WHEN 'hr' THEN 0 WHEN 'admin' THEN 1 WHEN 'ceo' THEN 2 WHEN 'coo' THEN 3 WHEN 'cpo' THEN 4 WHEN 'executive' THEN 5 ELSE 6 END, name
     """, (u["id"],))
     return jsonify(manager=manager, backups=backups)
 
@@ -393,7 +394,7 @@ def payslip_request(u):
 @app.get("/api/payslip-requests")
 @auth()
 def payslip_requests_list(u):
-    if u["role"] not in ("accounts", "hr", "ceo", "coo", "cpo", "superadmin"):
+    if u["role"] not in ("accounts",) + ADMIN_ROLES:
         return jsonify(error="Forbidden"), 403
     rows = q("""SELECT pr.id, pr.month, pr.status, pr.created_at, e.emp_no, e.name, e.designation, e.department
                 FROM payslip_requests pr JOIN employees e ON e.id=pr.emp_id WHERE pr.status='pending' ORDER BY pr.id DESC""")
@@ -412,7 +413,7 @@ _os.makedirs(UPLOAD_DIR, exist_ok=True)
 @app.post("/api/payslip-requests/<int:rid>/send")
 @auth()
 def payslip_requests_send(u, rid):
-    if u["role"] not in ("accounts", "hr", "ceo", "coo", "cpo", "superadmin"):
+    if u["role"] not in ("accounts",) + ADMIN_ROLES:
         return jsonify(error="Forbidden"), 403
     pr = q("SELECT * FROM payslip_requests WHERE id=?", (rid,), one=True)
     if not pr: return jsonify(error="Not found"), 404
@@ -734,7 +735,7 @@ def execute_decision(table, typ, r, rid, action, decider):
     emp_name = r_emp["name"] if r_emp else "Employee"
     req_label = r.get("code") or r.get("kind") or typ
     dates_label = ("%s to %s" % (r["from_date"], r["to_date"])) if "from_date" in r and r.get("from_date") else r.get("date", "")
-    if decider["role"] != "hr":
+    if decider["role"] not in HR_LIKE_ROLES:
         hrs = q("SELECT id FROM employees WHERE role='hr' AND active=1 AND id!=?", (decider["id"],))
         for h in hrs:
             msg = "[Manager Action] %s %s %s's %s leave (%s)" % (
@@ -753,7 +754,7 @@ def decide(u, typ, rid):
     table = {"request": "requests", "regularization": "regularizations", "reimbursement": "reimbursements", "loan": "loans"}.get(typ)
     if not table: raise ValueError("Unknown type")
     ids = approver_ids(u)
-    if u["role"] in ("ceo", "coo", "cpo"):
+    if u["role"] in ("ceo", "coo", "cpo", "executive"):
         r = q("SELECT * FROM %s WHERE id=? AND status='pending'" % table, (rid,), one=True)
     else:
         r = q("SELECT * FROM %s WHERE id=? AND approver_id IN (%s) AND status='pending'" % (table, ",".join("?" * len(ids))), [rid] + ids, one=True)
@@ -773,7 +774,7 @@ def admin_decide(u, typ, rid):
     if not r: return jsonify(error="Request not found or not pending"), 404
     if r["emp_id"] == u["id"]:
         return jsonify(error="Cannot approve your own request"), 400
-    if u["role"] == "hr":
+    if u["role"] in HR_LIKE_ROLES:
         target = q("SELECT role FROM employees WHERE id=?", (r["emp_id"],), one=True)
         if target and target["role"] in EXEC_ROLES:
             return jsonify(error="HR cannot decide executive requests"), 403
@@ -825,10 +826,7 @@ def hub(u):
     return jsonify(sorted(out, key=lambda x: x["created_at"] or "", reverse=True))
 
 
-# ---------- admin & executive control ----------
-EXEC_ROLES = ("ceo", "coo", "cpo", "superadmin")
-ADMIN_ROLES = ("hr", "ceo", "coo", "cpo", "superadmin")
-ROLES = ("employee", "manager", "hr", "ceo", "coo", "cpo", "superadmin")
+# ---------- admin & executive control ----------  (role lists are defined once, near the top of this file)
 
 
 @app.get("/api/admin/summary")
@@ -869,7 +867,8 @@ def a_emp_add(u):
     if len(j["password"]) < 8: raise ValueError("Password must be at least 8 characters")
     role = j.get("role", "employee")
     if role not in ROLES: raise ValueError("Invalid role")
-    if u["role"] == "hr" and role in EXEC_ROLES: raise ValueError("HR cannot create executive accounts")
+    if u["role"] in HR_LIKE_ROLES and (role in EXEC_ROLES or role == "admin"):
+        raise ValueError("HR cannot create executive or admin accounts")
     pdate(j["join_date"])
     mgr = j.get("manager_id") or None
     if mgr and not q("SELECT id FROM employees WHERE id=? AND active=1", (mgr,), one=True): raise ValueError("Manager not found")
@@ -909,7 +908,7 @@ def a_emp_upd(u, eid):
     j = body()
     e = q("SELECT * FROM employees WHERE id=?", (eid,), one=True)
     if not e: raise ValueError("Employee not found")
-    if u["role"] == "hr" and e["role"] in EXEC_ROLES:
+    if u["role"] in HR_LIKE_ROLES and e["role"] in EXEC_ROLES:
         raise ValueError("HR cannot modify executive leadership")
     sets, vals = [], []
     if "emp_no" in j:
@@ -931,9 +930,9 @@ def a_emp_upd(u, eid):
         sets.append("join_date=?"); vals.append(j["join_date"])
     if "role" in j:
         if j["role"] not in ROLES: raise ValueError("Invalid role")
-        if u["role"] == "hr" and j["role"] in EXEC_ROLES:
+        if u["role"] in HR_LIKE_ROLES and (j["role"] in EXEC_ROLES or j["role"] == "admin"):
             raise ValueError("HR cannot assign executive roles")
-        if eid == u["id"] and j["role"] != "hr" and u["role"] == "hr":
+        if eid == u["id"] and u["role"] in HR_LIKE_ROLES and j["role"] != u["role"]:
             raise ValueError("You cannot remove your own HR role")
         if eid == u["id"] and j["role"] != u["role"]:
             raise ValueError("You cannot change your own role")
@@ -958,7 +957,7 @@ def a_pw(u, eid):
     if len(j["password"]) < 8: raise ValueError("Password must be at least 8 characters")
     e = q("SELECT id, role FROM employees WHERE id=?", (eid,), one=True)
     if not e: raise ValueError("Employee not found")
-    if u["role"] == "hr" and e["role"] in EXEC_ROLES:
+    if u["role"] in HR_LIKE_ROLES and e["role"] in EXEC_ROLES:
         raise ValueError("HR cannot modify executive leadership")
     run("UPDATE employees SET password_hash=? WHERE id=?", (generate_password_hash(j["password"]), eid))
     return jsonify(ok=True)
@@ -1486,7 +1485,7 @@ def a_attendance_mark(u):
     emp_id = int(j["emp_id"])
     target = q("SELECT id, name, role, shift FROM employees WHERE id=?", (emp_id,), one=True)
     if not target: raise ValueError("Employee not found")
-    if u["role"] == "hr" and target["role"] in EXEC_ROLES:
+    if u["role"] in HR_LIKE_ROLES and target["role"] in EXEC_ROLES:
         raise ValueError("HR cannot modify executive attendance")
     pdate(j["date"])
     st = j["status"].strip().upper()
@@ -1559,7 +1558,7 @@ def a_requests(u):
         ORDER BY r.decided_at DESC
         LIMIT 100
     """)
-    if u["role"] == "hr":
+    if u["role"] in HR_LIKE_ROLES:
         leaves = [x for x in leaves if x["emp_role"] not in EXEC_ROLES]
         regs = [x for x in regs if x["emp_role"] not in EXEC_ROLES]
         reimbursements = [x for x in reimbursements if x["emp_role"] not in EXEC_ROLES]

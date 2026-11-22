@@ -169,7 +169,8 @@ DESIGNATIONS = [
 ] + ["Leadership"]
 
 # Departments shown in onboarding. "Executive" is kept for the C-suite accounts.
-DEPARTMENTS = [dept["department"] for dept in DESIGNATION_GROUPS] + ["Executive", "Leadership"]
+# dict.fromkeys drops duplicates (Leadership is already a group above) and keeps the order.
+DEPARTMENTS = list(dict.fromkeys([dept["department"] for dept in DESIGNATION_GROUPS] + ["Executive", "Leadership"]))
 
 # Older demo records used these titles/departments. Migrate them once on startup
 # so existing databases stay consistent with the master list.

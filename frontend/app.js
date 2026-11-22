@@ -5,6 +5,10 @@ const inr = n => "₹" + Number(n || 0).toLocaleString("en-IN");
 const fdate = s => s ? new Date(s.length === 10 ? s + "T00:00" : s.replace(" ", "T")).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "-";
 let ME = null;
 let MAINT = false, _maintTimer = null;
+// Role groups, kept in step with backend/app.py
+const EXEC_ROLES = ["ceo", "coo", "cpo", "executive", "superadmin"];   // leadership tier
+const HR_LIKE_ROLES = ["hr", "admin"];                                  // manage people, never executive accounts
+const ADMIN_ROLES = [...HR_LIKE_ROLES, ...EXEC_ROLES];
 
 async function api(path, method = "GET", data) {
   const r = await fetch("/api/" + path, { method, headers: { "Content-Type": "application/json" }, body: data ? JSON.stringify(data) : undefined });
@@ -40,7 +44,7 @@ function form(id, fields, submit = "Submit") {
     const opts = f.groups
       ? `<option value="">— Select Designation —</option>` + f.groups.map(g => `<optgroup label="${esc(g.name)}">${g.items.map(o => `<option value="${esc(o)}" ${isSel(o) ? "selected" : ""}>${esc(o)}</option>`).join("")}</optgroup>`).join("")
       : (f.opts || []).map(o => `<option value="${esc(o[0])}" ${isSel(o[0]) ? "selected" : ""}>${esc(o[1])}</option>`).join("");
-    let inp = f.type === "select" ? `<select ${c}>${opts}</select>`
+    let inp = f.type === "select" ? `<select ${c}${f.groups ? " data-ddl" : ""}>${opts}</select>`
       : f.type === "textarea" ? `<textarea ${c} rows="2">${esc(f.value ?? "")}</textarea>`
       : `<input ${c} type="${f.type || "text"}" ${f.readonly ? "readonly" : ""} ${f.step ? `step="${f.step}"` : ""} ${f.placeholder ? `placeholder="${esc(f.placeholder)}"` : ""} ${f.value !== undefined && f.value !== null && f.value !== "" ? `value="${esc(f.value)}"` : ""}>`;
     return `<div><label for="${id}-${f.n}">${esc(f.label)}</label>${inp}</div>`;
@@ -57,6 +61,68 @@ function wire(id, endpoint, done, tweak) {
 }
 const tabs = (names, cur) => `<div class="tabs" role="tablist">${names.map((n, i) => `<button role="tab" data-t="${i}" class="${i === cur ? "on" : ""}">${esc(n)}</button>`).join("")}</div>`;
 function wireTabs(fn) { document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => fn(+b.dataset.t)); }
+
+// Long grouped lists (designations) use our own dropdown instead of the browser's, because a
+// native <select> list opens upward when it is long. This one always opens below the field,
+// scrolls inside itself, and has a search box. The real <select> stays in the page (hidden) and
+// is kept in sync, so forms and the existing change handlers keep working unchanged.
+function enhanceSelect(sel) {
+  if (sel.dataset.ddlDone) return;
+  sel.dataset.ddlDone = "1";
+  const wrap = document.createElement("div"); wrap.className = "ddl";
+  if (sel.style.minWidth) wrap.style.minWidth = sel.style.minWidth;
+  const btn = document.createElement("button"); btn.type = "button"; btn.className = "ddl-btn";
+  btn.setAttribute("aria-haspopup", "listbox"); btn.setAttribute("aria-expanded", "false");
+  const panel = document.createElement("div"); panel.className = "ddl-panel"; panel.hidden = true;
+  const search = document.createElement("input"); search.type = "search"; search.className = "ddl-search";
+  search.placeholder = "Search..."; search.setAttribute("aria-label", "Search the list");
+  const list = document.createElement("div"); list.className = "ddl-list"; list.setAttribute("role", "listbox");
+  panel.append(search, list); wrap.append(btn, panel);
+  sel.style.display = "none"; sel.after(wrap);
+
+  const optLabel = o => o.textContent;
+  const paintButton = () => {
+    const o = sel.options[sel.selectedIndex];
+    const text = o && o.value ? optLabel(o) : (sel.options[0] ? optLabel(sel.options[0]) : "Select");
+    btn.innerHTML = `<span class="${o && o.value ? "" : "mute"}">${esc(text)}</span><i aria-hidden="true">▾</i>`;
+  };
+  const item = o => `<div class="ddl-opt${o.value === sel.value ? " sel" : ""}" role="option" aria-selected="${o.value === sel.value}" data-v="${esc(o.value)}">${esc(optLabel(o))}</div>`;
+  const buildList = q => {
+    const needle = q.trim().toLowerCase(), match = o => o.value && (!needle || optLabel(o).toLowerCase().includes(needle));
+    let html = "";
+    [...sel.children].forEach(ch => {
+      if (ch.tagName === "OPTGROUP") {
+        const rows = [...ch.children].filter(match);
+        if (rows.length) html += `<div class="ddl-group">${esc(ch.label)}</div>${rows.map(item).join("")}`;
+      } else if (match(ch)) html += item(ch);
+    });
+    list.innerHTML = html || `<div class="ddl-empty mute">Nothing found</div>`;
+  };
+  const close = () => { panel.hidden = true; btn.setAttribute("aria-expanded", "false"); };
+  const open = () => {
+    document.querySelectorAll(".ddl-panel:not([hidden])").forEach(p => { p.hidden = true; });
+    search.value = ""; buildList("");
+    panel.hidden = false; btn.setAttribute("aria-expanded", "true");
+    const cur = list.querySelector(".sel"); if (cur) cur.scrollIntoView({ block: "nearest" });
+    search.focus({ preventScroll: true });
+  };
+  btn.onclick = () => panel.hidden ? open() : close();
+  search.oninput = () => buildList(search.value);
+  list.onclick = e => {
+    const row = e.target.closest(".ddl-opt"); if (!row) return;
+    sel.value = row.dataset.v;
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    paintButton(); close(); btn.focus();
+  };
+  panel.onkeydown = e => { if (e.key === "Escape") { close(); btn.focus(); } };
+  paintButton();
+  if (!window.__ddlCloseBound) {
+    window.__ddlCloseBound = true;
+    document.addEventListener("click", e => document.querySelectorAll(".ddl-panel:not([hidden])").forEach(p => {
+      if (!p.parentElement.contains(e.target)) { p.hidden = true; const b = p.parentElement.querySelector(".ddl-btn"); if (b) b.setAttribute("aria-expanded", "false"); }
+    }));
+  }
+}
 
 // ---------------- pages ----------------
 const P = {};
@@ -98,7 +164,7 @@ P.engage = async el => {
       const diff = (today - d) / 86400000;
       return diff > 0 && diff <= 7;
     });
-    const canPost = ["hr","ceo","coo","cpo"].includes(ME.role);
+    const canPost = ADMIN_ROLES.includes(ME.role);
     el.innerHTML = `<div class="engage-hero"><h1>Engage</h1><p class="mute">Share updates, kudos & polls with your team.</p></div>
 ${todayB.length ? `<div class="bday-celebrate">🎂🎉 Happy Birthday ${todayB.map(b=>esc(b.name)).join(", ")}! 🎉🎂</div>` : ""}
     <div class="bday-bar">
@@ -497,7 +563,7 @@ P.delegates = async el => {
 
 // ---- admin & executive control
 P.executive = async el => {
-  const isExec = ["ceo", "coo", "cpo", "superadmin"].includes(ME.role);
+  const isExec = EXEC_ROLES.includes(ME.role);
   if (!isExec) { el.innerHTML = '<div class="card err">Executive Suite is only accessible to CEO, COO, CPO, and Super Admin.</div>'; return; }
   if (ME.role === "superadmin") { el.innerHTML = `<h1>Superadmin Suite</h1><div class="grid"><a class="card" href="#/admin" onclick="render()" style="text-decoration:none;color:inherit"><h2>HR Admin</h2><p class="mute">Manage employees, attendance, leave, tickets, documents.</p></a><a class="card" href="#/accounts" onclick="render()" style="text-decoration:none;color:inherit"><h2>Accounts Admin</h2><p class="mute">Payslip requests and approvals.</p></a></div>`; return; }
   let tab = ME.role === "coo" ? 1 : ME.role === "cpo" ? 2 : 0;
@@ -652,7 +718,7 @@ P.executive = async el => {
 };
 
 P.admin = async el => {
-  const ADMINS = ["hr", "ceo", "coo", "cpo", "superadmin"];
+  const ADMINS = ADMIN_ROLES;
   if (!ADMINS.includes(ME.role)) { el.innerHTML = '<div class="card err">Admin is only available to HR and Executive Leadership.</div>'; return; }
   let tab = 0;
   const NAMES = ["📊 Overview", "👥 Employees", "🕒 Attendance", "✅ Leave Approvals", "📅 Casual Leave (CL)", "🎉 Holidays", "🎫 Tickets", "📄 Documents", "📧 Email Outbox", "📋 Attendance Overview"];
@@ -665,9 +731,9 @@ P.admin = async el => {
     if (tab === 1) {
       const [emps, desig] = await Promise.all([api("admin/employees"), api("designations")]);
       const mgr = [["", "— None —"], ...emps.filter(e => e.active).map(e => [e.id, e.name])];
-      const isExec = ["ceo", "coo", "cpo", "superadmin"].includes(ME.role);
+      const isExec = EXEC_ROLES.includes(ME.role);
       const roleChoices = isExec
-        ? [["employee", "Employee"], ["manager", "Manager"], ["hr", "HR"], ["cpo", "CPO"], ["coo", "COO"], ["ceo", "CEO"]]
+        ? [["employee", "Employee"], ["manager", "Manager"], ["hr", "HR"], ["admin", "Admin"], ["executive", "Executive"], ["cpo", "CPO"], ["coo", "COO"], ["ceo", "CEO"]]
         : [["employee", "Employee"], ["manager", "Manager"], ["hr", "HR"]];
       // Grouped dropdown options: department (or department — sub-group)
       const desigOptGroups = desig.groups.flatMap(d => d.groups.map(g => ({
@@ -821,7 +887,7 @@ P.admin = async el => {
           <p class="mute">Current designation: <b>${esc(editing.designation || "—")}</b></p>
           <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
             <div><label for="edit-desig-sel">New designation</label>
-              <select id="edit-desig-sel" style="min-width:320px">
+              <select id="edit-desig-sel" data-ddl style="min-width:320px">
                 ${editing.designation && !desig.flat.includes(editing.designation) ? `<option selected value="${esc(editing.designation)}">${esc(editing.designation)} (current)</option>` : ""}
                 ${desigOptGroups.map(g => `<optgroup label="${esc(g.name)}">${g.items.map(d => `<option ${d === editing.designation ? "selected" : ""}>${esc(d)}</option>`).join("")}</optgroup>`).join("")}
               </select>
@@ -841,7 +907,7 @@ P.admin = async el => {
             ["Reports to", r => r.manager_name || "-"],
             ["Status", r => badge(r.active ? "active" : "inactive"), 1],
             ["Actions", r => {
-              if (!isExec && ["ceo", "coo", "cpo"].includes(r.role)) return `<span class="badge ceo">Leadership</span>`;
+              if (!isExec && EXEC_ROLES.includes(r.role)) return `<span class="badge ceo">Leadership</span>`;
               const editBtn = `<button class="btn sm" data-empedit="${r.id}">Edit</button>`;
               if (r.id === ME.id) return `${editBtn} <span class="mute">Current User</span>`;
               return `
@@ -1134,6 +1200,7 @@ P.admin = async el => {
       ${drillHtml}`;
     }
     el.innerHTML = `<h1>HR Admin</h1>${tabs(NAMES, tab)}${inner}`;
+    el.querySelectorAll("select[data-ddl]").forEach(enhanceSelect);
     wireTabs(i => { tab = i; draw._aoMonth = null; draw.__aoDrill = null; draw._editDesig = null; draw._empView = null; draw._empEditId = null; draw._clEdit = null; draw(); });
     wire("ae", "admin/employees", () => { toast("Member added & credentials sent to official email!"); draw._empView = "list"; draw(); }, d => ({ ...d, manager_id: d.manager_id ? +d.manager_id : null }));
     wire("atf", "admin/attendance", draw, d => ({ ...d, emp_id: +d.emp_id }));
@@ -1337,17 +1404,18 @@ function bindSide(route) {
 }
 function sidebar(route) {
   const link = (r, l, ic) => `<a href="#/${r}" onclick="setTimeout(()=>render(),0)" class="${r === route ? "on" : ""}"><span class="ic" aria-hidden="true">${ic || ""}</span>${esc(l)}${r === "review" && ME.pending_reviews ? ` <span class="badge pending">${ME.pending_reviews}</span>` : ""}</a>`;
-  const isExec = ["ceo", "coo", "cpo", "superadmin"].includes(ME.role);
-  const isHR = ME.role === "hr" || ME.role === "superadmin";
+  const isExec = EXEC_ROLES.includes(ME.role);
+  const isHR = HR_LIKE_ROLES.includes(ME.role) || ME.role === "superadmin";
   let navList = [...NAV];
   if (isExec) {
     if (ME.role === "superadmin") {
       navList = [["executive", "Superadmin Suite", "🏛"], ...navList];
     } else {
-      navList = [["executive", `${ME.role.toUpperCase()} Suite`, "🏛"], ...navList, ["admin", "HR Admin", "★"], ["accounts", "Accounts Admin", "▤"]];
+      // HR Admin sits at the top, above Home
+      navList = [["executive", `${ME.role.toUpperCase()} Suite`, "🏛"], ["admin", "HR Admin", "★"], ...navList, ["accounts", "Accounts Admin", "▤"]];
     }
   } else if (isHR) {
-    navList = [...navList, ["admin", "HR Admin", "★"]];
+    navList = [["admin", "HR Admin", "★"], ...navList];
   } else if (ME.role === "accounts" || ME.role === "superadmin") {
     navList = [...navList, ["accounts", "Accounts Admin", "▤"]];
   }
@@ -1464,12 +1532,12 @@ function render() {
     $("#lg").onsubmit = async e => {
       e.preventDefault(); $("#lg-err").textContent = "";
       const btn = e.target.querySelector("button.btn"); btn.disabled = true; btn.textContent = "Signing in…";
-      try { await api("login", "POST", Object.fromEntries(new FormData(e.target))); await refreshMe(); location.hash = ["ceo", "coo", "cpo"].includes(ME.role) ? "#/executive" : "#/home"; render(); }
+      try { await api("login", "POST", Object.fromEntries(new FormData(e.target))); await refreshMe(); location.hash = ["ceo", "coo", "cpo", "executive"].includes(ME.role) ? "#/executive" : "#/home"; render(); }
       catch (er) { $("#lg-err").textContent = er.message; btn.disabled = false; btn.textContent = "Sign in"; }
     };
     return;
   }
-  const route = (location.hash.replace("#/", "") || (["ceo", "coo", "cpo"].includes(ME.role) ? "executive" : "home"));
+  const route = (location.hash.replace("#/", "") || (["ceo", "coo", "cpo", "executive"].includes(ME.role) ? "executive" : "home"));
   openGroups.clear();  // on every page change only the current page's dropdown starts open
   app.innerHTML = `<div class="shell"><aside id="side" aria-label="Main menu">${sidebar(route)}</aside>
   <div class="main"><header><button class="btn sec sm menu-btn" id="mb" aria-label="Menu">☰</button><span class="mute">${esc(ME.designation)} · ${esc(ME.department)}</span><span class="who">${themeBtn()}<button class="bell" id="bell" aria-label="Notifications">🔔<b id="bellcount">${ME.unread || ""}</b></button><span>${esc(ME.name)} <span class="badge ${esc(ME.role)}">${esc(ME.role.toUpperCase())}</span> <span class="mute">#${esc(ME.emp_no)}</span></span><button class="btn sec sm" id="out">Sign out</button></span></header><main id="page" tabindex="-1"></main></div></div>`;

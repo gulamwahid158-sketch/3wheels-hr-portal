@@ -248,6 +248,31 @@ def test_hr_member_management_attendance_and_leave_approval():
     assert history_item["status"] == "approved"
     assert history_item["decider_name"] == "Vikram Sen"
 
+def test_new_roles_admin_and_executive():
+    ceo = login("ceo@example.com")
+    base = {"department": "Technical", "designation": "AI Engineer", "join_date": "2026-11-22", "password": "longenough1"}
+    # own HR user, because an earlier test changes the demo HR password
+    assert ceo.post("/api/admin/employees", json={**base, "name": "Hera HR", "email": "hera@example.com", "role": "hr"}).status_code == 200
+    hr = A.app.test_client(); assert hr.post("/api/login", json={"email": "hera@example.com", "password": "longenough1"}).status_code == 200
+    # HR may not hand out admin or executive roles; leadership may
+    assert hr.post("/api/admin/employees", json={**base, "name": "A", "email": "adm@example.com", "role": "admin"}).status_code == 400
+    assert hr.post("/api/admin/employees", json={**base, "name": "E", "email": "exe@example.com", "role": "executive"}).status_code == 400
+    assert ceo.post("/api/admin/employees", json={**base, "name": "Adam Admin", "email": "adm@example.com", "role": "admin"}).status_code == 200
+    assert ceo.post("/api/admin/employees", json={**base, "name": "Eve Exec", "email": "exe@example.com", "role": "executive"}).status_code == 200
+    def sign_in(email):
+        c = A.app.test_client(); assert c.post("/api/login", json={"email": email, "password": "longenough1"}).status_code == 200; return c
+    adm, exe = sign_in("adm@example.com"), sign_in("exe@example.com")
+    # admin = HR level: HR Admin area yes, executive dashboard no, and executives are off limits
+    assert adm.get("/api/admin/summary").status_code == 200
+    assert adm.get("/api/executive/summary").status_code == 403
+    ceo_id = next(p["id"] for p in ceo.get("/api/people").get_json() if p["email"] == "ceo@example.com")
+    assert adm.patch("/api/admin/employees/%d" % ceo_id, json={"location": "X"}).status_code == 400
+    # executive = leadership tier: executive dashboard and HR Admin area
+    assert exe.get("/api/executive/summary").status_code == 200
+    assert exe.get("/api/admin/summary").status_code == 200
+    # the Leadership department is listed once
+    assert login("komal@example.com").get("/api/designations").get_json()["departments"].count("Leadership") == 1
+
 def test_designation_master_list():
     c = login("komal@example.com")
     d = c.get("/api/designations").get_json()
