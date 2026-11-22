@@ -1,0 +1,30 @@
+# Render blueprint — https://render.com/docs/blueprint-spec
+# In Render: New + → Blueprint → pick this repo. Fill the MYSQL_* values when prompted
+# (they come from Hostinger hPanel → Databases → Management / Remote MySQL).
+services:
+  - type: web
+    name: 3wheels-hr-portal
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --chdir backend wsgi:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: PORTAL_URL
+        value: https://hr.3wheels.ai
+      - key: MYSQL_HOST
+        sync: false
+      - key: MYSQL_PORT
+        value: "3306"
+      - key: MYSQL_USER
+        sync: false
+      - key: MYSQL_PASSWORD
+        sync: false
+      - key: MYSQL_DB
+        sync: false

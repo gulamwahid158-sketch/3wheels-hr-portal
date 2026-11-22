@@ -18,6 +18,11 @@ GRANT ALL PRIVILEGES ON peopledesk.* TO 'peopledesk'@'localhost';
 GRANT ALL PRIVILEGES ON peopledesk_test.* TO 'peopledesk'@'localhost';
 ```
 Moving from the old SQLite file: `python migrate_sqlite_to_mysql.py` (copies `backend/peopledesk.db` into MySQL; re-runnable).
+
+## Deploy
+Production entry point is `backend/wsgi.py` (`gunicorn --chdir backend wsgi:app`). A Render blueprint
+(`render.yaml`) and a `Procfile` are included; step-by-step instructions for **Render + Hostinger MySQL +
+`hr.3wheels.ai` subdomain** are in [docs/DEPLOY.md](docs/DEPLOY.md). Shared PHP hosting cannot run this app.
 Demo logins (password `demo123`):
 - **Executives (Co-Equal C-Suite Leadership & Full HR Control):** `ceo@example.com` (CEO), `coo@example.com` (COO), `cpo@example.com` (CPO)
 - **HR & Staff:** `hr@example.com` (HR Head), `manager@example.com` (Manager), `komal@example.com` (Employee).

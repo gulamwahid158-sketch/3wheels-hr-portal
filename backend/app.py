@@ -12,9 +12,14 @@ import db
 from designations import DESIGNATION_GROUPS, DESIGNATIONS, DEPARTMENTS
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "frontend")
+PORTAL_URL = os.environ.get("PORTAL_URL", "http://localhost:5000").rstrip("/")
 app = Flask(__name__, static_folder=ROOT, static_url_path="")
 app.secret_key = os.environ.get("SECRET_KEY", "dev-only-change-me")
-app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
+                  SESSION_COOKIE_SECURE=PORTAL_URL.startswith("https://"))
+# Behind Render / nginx / any reverse proxy: trust X-Forwarded-* so https + host are right.
+from werkzeug.middleware.proxy_fix import ProxyFix
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 EXEC_ROLES = ("ceo", "coo", "cpo", "superadmin")
 ADMIN_ROLES = ("hr", "ceo", "coo", "cpo", "superadmin")
@@ -30,7 +35,7 @@ Welcome to 3Wheels AI!
 
 Your official employee account has been created by HR. You can now log in to the 3Wheels AI portal using your official credentials below:
 
-- Portal URL: http://localhost:5000
+- Portal URL: {PORTAL_URL}
 - Official Email: {to_email}
 - Employee ID: {emp_no}
 - Temporary Password: {password}

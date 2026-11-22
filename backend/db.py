@@ -254,17 +254,50 @@ def ensure_columns(c):
             c.execute("ALTER TABLE employees ADD COLUMN %s %s" % (name, typ))
 
 
-def init(reset=False):
-    """Create the database/tables if missing and seed demo data on first run."""
+def _drop_all_tables(c):
+    """Fallback for reset when the account may not DROP DATABASE (hosted MySQL)."""
+    tables = [list(r.values())[0] for r in c.execute("SHOW TABLES").fetchall()]
+    c.execute("SET FOREIGN_KEY_CHECKS=0")
+    for t in tables:
+        c.execute("DROP TABLE IF EXISTS `%s`" % t)
+    c.execute("SET FOREIGN_KEY_CHECKS=1")
+    c.commit()
+
+
+def _ensure_database(reset):
+    """Create the database if missing. On hosted MySQL (Hostinger, RDS, ...) the
+    account usually cannot CREATE/DROP DATABASE but the database already exists,
+    so we only reach for the admin connection when a direct connect fails."""
     name = config()["database"]
+    if reset:
+        try:
+            admin = Conn(_connect(database=""))
+            try:
+                admin.execute("DROP DATABASE IF EXISTS `%s`" % name)
+                admin.commit()
+            finally:
+                admin.close()
+        except pymysql.MySQLError:
+            c = conn()
+            try: _drop_all_tables(c)
+            finally: c.close()
+    try:
+        conn().close()  # database exists and we can reach it
+        if not reset: return
+    except pymysql.err.OperationalError as e:
+        if e.args[0] != 1049:  # 1049 = unknown database; anything else is a real error
+            raise
     admin = Conn(_connect(database=""))
     try:
-        if reset:
-            admin.execute("DROP DATABASE IF EXISTS `%s`" % name)
         admin.execute("CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci" % name)
         admin.commit()
     finally:
         admin.close()
+
+
+def init(reset=False):
+    """Create the database/tables if missing and seed demo data on first run."""
+    _ensure_database(reset)
 
     c = conn()
     try:
