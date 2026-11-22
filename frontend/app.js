@@ -1318,7 +1318,10 @@ P.admin = async el => {
 function bindSide(route) {
   document.querySelectorAll(".grp").forEach(b => b.onclick = e => {
     e.stopPropagation();
-    const g = b.dataset.g; if (openGroups.has(g)) { openGroups.delete(g); } else { openGroups.clear(); openGroups.add(g); }
+    // Accordion: opening one dropdown closes every other one, including the one that
+    // holds the current page. "" means "all closed" (an empty set would fall back to the current page's group).
+    const g = b.dataset.g, wasOpen = b.getAttribute("aria-expanded") === "true";
+    openGroups.clear(); openGroups.add(wasOpen ? "" : g);
     $("#side").innerHTML = sidebar(route); bindSide(route);
     const nb = $(`.grp[data-g="${g}"]`); if (nb) nb.focus();
   });
@@ -1351,7 +1354,7 @@ function sidebar(route) {
   <div class="prof"><span class="avatar">${esc(ME.name[0])}</span><div><b>Hi ${esc(ME.name.split(" ")[0])}</b> <span class="badge ${esc(ME.role)}">${esc(ME.role.toUpperCase())}</span><br><a href="#/my-info">View My Info</a></div><a href="#/my-info" class="gear" aria-label="Settings">⚙</a></div>
   <nav>${navList.map(n => {
     if (typeof n[2] !== "object") return link(n[0], n[1], n[2]);
-    const [label, ic, kids] = n, has = kids.some(k => k[0] === route), open = has || openGroups.has(label);
+    const [label, ic, kids] = n, has = kids.some(k => k[0] === route), open = openGroups.size ? openGroups.has(label) : has;
     return `<button class="grp" data-g="${esc(label)}" aria-expanded="${open}"><span class="ic" aria-hidden="true">${ic}</span>${esc(label)}<span class="chev">${open ? "▲" : "▼"}</span></button><div class="sub ${open ? "open" : ""}">${kids.map(k => link(k[0], k[1])).join("")}</div>`;
   }).join("")}</nav>`;
 }
@@ -1466,6 +1469,7 @@ function render() {
     return;
   }
   const route = (location.hash.replace("#/", "") || (["ceo", "coo", "cpo"].includes(ME.role) ? "executive" : "home"));
+  openGroups.clear();  // on every page change only the current page's dropdown starts open
   app.innerHTML = `<div class="shell"><aside id="side" aria-label="Main menu">${sidebar(route)}</aside>
   <div class="main"><header><button class="btn sec sm menu-btn" id="mb" aria-label="Menu">☰</button><span class="mute">${esc(ME.designation)} · ${esc(ME.department)}</span><span class="who">${themeBtn()}<button class="bell" id="bell" aria-label="Notifications">🔔<b id="bellcount">${ME.unread || ""}</b></button><span>${esc(ME.name)} <span class="badge ${esc(ME.role)}">${esc(ME.role.toUpperCase())}</span> <span class="mute">#${esc(ME.emp_no)}</span></span><button class="btn sec sm" id="out">Sign out</button></span></header><main id="page" tabindex="-1"></main></div></div>`;
   bindSide(route); bindTheme();
