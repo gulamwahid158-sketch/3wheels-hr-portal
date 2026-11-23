@@ -273,6 +273,15 @@ def leave_apply(u):
     approver = int(j.get("approver_id") or approver_of(u))
     rid = run("INSERT INTO requests(emp_id,kind,code,from_date,to_date,from_session,to_session,days,reason,approver_id,contact) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
               (u["id"], "leave", j["code"], j["from_date"], j["to_date"], fs, ts, days, j["reason"], approver, str(j.get("contact") or "").strip()[:120] or None))
+    if u["role"] == "superadmin":
+        # nobody sits above the superadmin: the leave is approved on the spot, no one else is asked
+        run("UPDATE requests SET status='approved',decided_at=?,approver_id=?,remark=? WHERE id=?",
+            (datetime.now().isoformat(), u["id"], "Auto-approved (superadmin)", rid))
+        d_, t_ = pdate(j["from_date"]), pdate(j["to_date"])
+        while d_ <= t_:
+            run("UPDATE attendance SET status=? WHERE emp_id=? AND date=? AND status NOT IN('H','O')", (j["code"] if j["code"] != "LOP" else "A", u["id"], d_.isoformat()))
+            d_ += timedelta(days=1)
+        return jsonify(id=rid, days=days, auto_approved=True)
     notify(approver, "%s applied for %s leave (%.1f day(s))" % (u["name"], t["name"], days))
     return jsonify(id=rid, days=days)
 
