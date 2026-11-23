@@ -10,6 +10,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 import pymysql
 import db
+import biometric
 from designations import DESIGNATION_GROUPS, DESIGNATIONS, DEPARTMENTS
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "frontend")
@@ -354,12 +355,13 @@ def attendance(u):
     def mins(t): h, mi = t.split(":"); return int(h) * 60 + int(mi)
     avg_in = sum(mins(r["first_in"]) for r in work) / len(work) if work else 0
     avg_out = sum(mins(r["last_out"]) for r in work) / len(work) if work else 0
+    avg_work = sum(biometric.work_minutes(r["first_in"], r["last_out"]) for r in work) / len(work) if work else 0  # night shifts end after midnight
     fmt = lambda x: "%02d:%02d" % divmod(int(x), 60)
     shift_start = mins(u["shift"].split("-")[0])
     summary = dict(present=len(work), absent=sum(r["status"] == "A" for r in rows), leave=sum(r["status"] in ("CL", "L", "CO") for r in rows),
                    holidays=sum(r["status"] == "H" for r in rows), late_in=sum(mins(r["first_in"]) > shift_start + 15 for r in work),
                    avg_first_in=fmt(avg_in) if work else "-", avg_last_out=fmt(avg_out) if work else "-",
-                   avg_work_hrs=("%.2f" % ((avg_out - avg_in) / 60)) if work else "-")
+                   avg_work_hrs=("%.2f" % (avg_work / 60)) if work else "-")
     exc = [r["date"] for r in rows if r["status"] == "A"]
     return jsonify(days=rows, summary=summary, exceptions=exc, shift=u["shift"])
 
@@ -981,7 +983,7 @@ def a_emps(u):
     cols = [
         "e.id", "e.emp_no", "e.name", "e.email", "e.role", "e.department",
         "e.designation", "e.location", "e.manager_id", "e.join_date", "e.dob",
-        "e.skills", "e.shift", "e.active",
+        "e.skills", "e.shift", "e.active", "e.biometric_id",
     ] + ["e." + f for f in EMP_EXTRA_FIELDS] + ["m.name manager_name"]
     return jsonify(q(
         "SELECT %s FROM employees e LEFT JOIN employees m ON m.id=e.manager_id ORDER BY e.emp_no"
@@ -1012,16 +1014,17 @@ def a_emp_add(u):
         n += 1  # a code may have been edited by hand, never reuse one
     emp_no = "3WAI%05d" % n
     extras = {f: str(j.get(f) or "").strip() for f in EMP_EXTRA_FIELDS}
+    bio = clean_biometric_id(j.get("biometric_id"))
     cols = [
         "emp_no", "name", "email", "password_hash", "role", "department",
         "designation", "location", "manager_id", "join_date", "dob", "skills",
-        "shift",
+        "shift", "biometric_id",
     ] + list(EMP_EXTRA_FIELDS)
     vals = [
         emp_no, j["name"].strip(), email, generate_password_hash(j["password"]),
         role, j["department"], j["designation"], j.get("location") or "", mgr,
         j["join_date"], j.get("dob") or "", j.get("skills") or "",
-        j.get("shift") or "11:00-20:00",
+        j.get("shift") or "11:00-20:00", bio,
     ] + [extras[f] for f in EMP_EXTRA_FIELDS]
     eid = run(
         "INSERT INTO employees(%s) VALUES(%s)" % (
@@ -1031,6 +1034,7 @@ def a_emp_add(u):
     )
     for code, g in (("CL", 0), ("CO", 0), ("LOP", 0)):  # every leave type starts at 0; HR grants days explicitly
         run("INSERT INTO leave_grants(emp_id,code,year,granted,opening_used) VALUES(?,?,?,?,0)", (eid, code, "2026-2027", g))
+    if bio: rebuild_attendance(eid)  # punches already stored for this machine ID show up straight away
     notify(eid, "Welcome to 3Wheels AI! Your account is ready.")
     send_welcome_email(email, j["name"].strip(), emp_no, j["password"], role, j["designation"], j["department"])
     return jsonify(id=eid, emp_no=emp_no, email_sent=True)
@@ -1059,6 +1063,8 @@ def a_emp_upd(u, eid):
         nm = str(j["name"] or "").strip()
         if not nm: raise ValueError("Name is required")
         sets.append("name=?"); vals.append(nm)
+    if "biometric_id" in j:
+        sets.append("biometric_id=?"); vals.append(clean_biometric_id(j["biometric_id"], eid))
     if "join_date" in j and j["join_date"]:
         pdate(j["join_date"])
         sets.append("join_date=?"); vals.append(j["join_date"])
@@ -1081,6 +1087,7 @@ def a_emp_upd(u, eid):
         sets.append("manager_id=?"); vals.append(m)
     if not sets: raise ValueError("Nothing to update")
     run("UPDATE employees SET %s WHERE id=?" % ",".join(sets), vals + [eid])
+    if "biometric_id" in j: rebuild_attendance(eid)
     return jsonify(ok=True)
 
 
@@ -1352,11 +1359,7 @@ def _attendance_export_data(month):
                 counts[rec["status"]] += 1
             if rec["status"] == "P" and rec["first_in"] and rec["last_out"]:
                 try:
-                    fi = datetime.strptime(rec["first_in"], "%H:%M")
-                    lo = datetime.strptime(rec["last_out"], "%H:%M")
-                    diff = int((lo - fi).total_seconds() // 60)
-                    if diff > 0:
-                        total_working_mins += diff
+                    total_working_mins += biometric.work_minutes(rec["first_in"], rec["last_out"])
                 except Exception:
                     pass
         out.append({
@@ -1637,6 +1640,127 @@ def a_attendance_mark(u):
         (emp_id, j["date"], st, fi, lo))
     notify(emp_id, "Your attendance for %s was marked as %s by %s" % (j["date"], st, u["name"]))
     return jsonify(ok=True)
+
+
+# ---------- biometric machine ----------
+def clean_biometric_id(raw, eid=None):
+    """The number the machine knows a person by. '000000005' and '5' are the same id."""
+    bid = biometric.norm_id(raw)
+    if not bid: return None
+    if not re.fullmatch(r"[A-Za-z0-9]{1,20}", bid): raise ValueError("Biometric ID can only have letters and numbers")
+    other = q("SELECT name FROM employees WHERE biometric_id=? AND id!=?", (bid, eid or 0), one=True)
+    if other: raise ValueError("Biometric ID %s already belongs to %s" % (bid, other["name"]))
+    return bid
+
+
+def rebuild_attendance(emp_id=None):
+    """Fill first in / last out from the stored punches for everyone who has a Biometric ID.
+    Rows a person entered (leave, holiday, regularization, HR mark) are never overwritten."""
+    where, args = "active=1 AND biometric_id IS NOT NULL AND biometric_id<>''", []
+    if emp_id: where += " AND id=?"; args.append(emp_id)
+    emps = q("SELECT id, biometric_id FROM employees WHERE " + where, args)
+    stats = dict(employees=len(emps), inserted=0, updated=0, kept_manual=0)
+    if not emps: return stats
+    owner = {e["biometric_id"]: e["id"] for e in emps}
+    times = {}
+    for r in q("SELECT enno, punch_at FROM biometric_punches WHERE enno IN (%s) ORDER BY punch_at" % ",".join("?" * len(owner)), list(owner)):
+        times.setdefault(r["enno"], []).append(r["punch_at"])
+    have = {(r["emp_id"], r["date"]): r for r in q(
+        "SELECT emp_id, date, status, first_in, source FROM attendance WHERE emp_id IN (%s)" % ",".join("?" * len(emps)), [e["id"] for e in emps])}
+    ins, upd = [], []
+    for enno, ts in times.items():
+        eid = owner[enno]
+        for day, (fi, lo) in biometric.derive_days(ts).items():
+            cur = have.get((eid, day))
+            if cur is None: ins.append((eid, day, "P", fi, lo, "bio"))
+            elif cur["source"] == "bio" or (cur["status"] in ("H", "O") and not cur["first_in"]): upd.append((fi, lo, "bio", eid, day))
+            else: stats["kept_manual"] += 1
+    c = db.conn()
+    try:
+        if ins: c.executemany("INSERT IGNORE INTO attendance(emp_id,date,status,first_in,last_out,source) VALUES(?,?,?,?,?,?)", ins)
+        if upd: c.executemany("UPDATE attendance SET first_in=?,last_out=?,source=? WHERE emp_id=? AND date=?", upd)
+        c.commit()
+    finally:
+        c.close()
+    stats["inserted"], stats["updated"] = len(ins), len(upd)
+    return stats
+
+
+def bio_unmatched():
+    """Machine users nobody in the portal is linked to yet, each with a name based guess."""
+    rows = q("""SELECT p.enno, MAX(p.name) name, COUNT(*) punches, MIN(p.punch_at) first_seen, MAX(p.punch_at) last_seen
+                FROM biometric_punches p LEFT JOIN employees e ON e.biometric_id = p.enno AND e.active = 1
+                WHERE e.id IS NULL GROUP BY p.enno""")
+    rows.sort(key=lambda r: (not r["enno"].isdigit(), int(r["enno"]) if r["enno"].isdigit() else 0, r["enno"]))
+    free = q("SELECT id, name FROM employees WHERE active=1 AND (biometric_id IS NULL OR biometric_id='')")
+    for r in rows:
+        r["suggest_id"] = biometric.suggest_employee(r["name"], free)
+        r["first_seen"], r["last_seen"] = str(r["first_seen"])[:10], str(r["last_seen"])[:10]
+    claimed = {}
+    for r in rows:
+        if r["suggest_id"]: claimed[r["suggest_id"]] = claimed.get(r["suggest_id"], 0) + 1
+    for r in rows:  # two machine users guessing the same person means we do not know
+        if r["suggest_id"] and claimed[r["suggest_id"]] > 1: r["suggest_id"] = None
+    return rows
+
+
+def link_biometric(links):
+    done = 0
+    for l in links:
+        eid = int(l["emp_id"])
+        if not q("SELECT id FROM employees WHERE id=? AND active=1", (eid,), one=True): raise ValueError("Employee not found")
+        run("UPDATE employees SET biometric_id=? WHERE id=?", (clean_biometric_id(l["enno"], eid), eid))
+        done += 1
+    return done
+
+
+@app.get("/api/admin/biometric")
+@auth(ADMIN_ROLES)
+def a_bio_status(u):
+    s = q("SELECT COUNT(*) punches, COUNT(DISTINCT enno) users, MIN(punch_at) date_from, MAX(punch_at) date_to FROM biometric_punches", one=True)
+    return jsonify(punches=s["punches"], users=s["users"], date_from=str(s["date_from"] or "")[:10], date_to=str(s["date_to"] or "")[:16],
+                   linked=q("SELECT COUNT(*) c FROM employees WHERE active=1 AND biometric_id IS NOT NULL AND biometric_id<>''", one=True)["c"],
+                   unmatched=bio_unmatched())
+
+
+@app.post("/api/admin/biometric/import")
+@auth(ADMIN_ROLES)
+def a_bio_import(u):
+    j = body("text")
+    punches, bad = biometric.parse_glog(j["text"])
+    if not punches:
+        raise ValueError("No punches found. Upload the GLog file from the machine (tab separated: No, Mchn, EnNo, Name, Mode, IOMd, DateTime).")
+    before = q("SELECT COUNT(*) c FROM biometric_punches", one=True)["c"]
+    c = db.conn()
+    try:
+        c.executemany("INSERT IGNORE INTO biometric_punches(enno,punch_at,name,machine) VALUES(?,?,?,?)",
+                      [(p["enno"], p["at"], p["name"][:120], p["machine"][:10]) for p in punches])
+        c.commit()
+    finally:
+        c.close()
+    new = q("SELECT COUNT(*) c FROM biometric_punches", one=True)["c"] - before
+    stats = rebuild_attendance()
+    return jsonify(read=len(punches), new=new, duplicates=len(punches) - new, bad_lines=bad, machine_users=len({p["enno"] for p in punches}),
+                   date_from=min(p["at"] for p in punches).strftime("%Y-%m-%d"), date_to=max(p["at"] for p in punches).strftime("%Y-%m-%d"),
+                   unmatched=len(bio_unmatched()), **stats)
+
+
+@app.post("/api/admin/biometric/link")
+@auth(ADMIN_ROLES)
+def a_bio_link(u):
+    j = request.get_json(silent=True) or {}
+    links = j.get("links") or []
+    if not links: raise ValueError("Nothing to link")
+    done = link_biometric(links)
+    return jsonify(linked=done, **rebuild_attendance())
+
+
+@app.post("/api/admin/biometric/automatch")
+@auth(ADMIN_ROLES)
+def a_bio_automatch(u):
+    links = [{"enno": r["enno"], "emp_id": r["suggest_id"]} for r in bio_unmatched() if r["suggest_id"]]
+    done = link_biometric(links)
+    return jsonify(linked=done, **rebuild_attendance())
 
 
 @app.get("/api/admin/requests")

@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS employees(
  id INT AUTO_INCREMENT PRIMARY KEY, emp_no VARCHAR(20) UNIQUE, name VARCHAR(120), email VARCHAR(190) UNIQUE, password_hash VARCHAR(255),
  role VARCHAR(20) DEFAULT 'employee', department VARCHAR(100), designation VARCHAR(120), location VARCHAR(100),
  manager_id INT, join_date VARCHAR(10), dob VARCHAR(10), skills TEXT, shift VARCHAR(20) DEFAULT '11:00-20:00', active TINYINT DEFAULT 1,
- INDEX idx_emp_manager(manager_id), INDEX idx_emp_role(role));
+ biometric_id VARCHAR(20),
+ INDEX idx_emp_manager(manager_id), INDEX idx_emp_role(role), INDEX idx_emp_bio(biometric_id));
 CREATE TABLE IF NOT EXISTS leave_types(code VARCHAR(10) PRIMARY KEY, name VARCHAR(60), quota DOUBLE, kind VARCHAR(20));
 CREATE TABLE IF NOT EXISTS leave_grants(id INT AUTO_INCREMENT PRIMARY KEY, emp_id INT, code VARCHAR(10), year VARCHAR(12), granted DOUBLE, opening_used DOUBLE DEFAULT 0,
  INDEX idx_grant_emp(emp_id, code));
@@ -74,7 +75,8 @@ CREATE TABLE IF NOT EXISTS requests(
  ref_id INT, approver_id INT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, decided_at VARCHAR(40), remark TEXT, contact VARCHAR(120),
  INDEX idx_req_emp(emp_id), INDEX idx_req_approver(approver_id, status));
 CREATE TABLE IF NOT EXISTS holidays(date VARCHAR(10) PRIMARY KEY, name VARCHAR(100), restricted TINYINT DEFAULT 0);
-CREATE TABLE IF NOT EXISTS attendance(emp_id INT, date VARCHAR(10), status VARCHAR(5), first_in VARCHAR(5), last_out VARCHAR(5), PRIMARY KEY(emp_id, date));
+CREATE TABLE IF NOT EXISTS attendance(emp_id INT, date VARCHAR(10), status VARCHAR(5), first_in VARCHAR(5), last_out VARCHAR(5), source VARCHAR(10), PRIMARY KEY(emp_id, date));
+CREATE TABLE IF NOT EXISTS biometric_punches(enno VARCHAR(20), punch_at DATETIME, name VARCHAR(120), machine VARCHAR(10), PRIMARY KEY(enno, punch_at));
 CREATE TABLE IF NOT EXISTS regularizations(
  id INT AUTO_INCREMENT PRIMARY KEY, emp_id INT, kind VARCHAR(20), date VARCHAR(10), in_time VARCHAR(5), out_time VARCHAR(5), reason TEXT,
  status VARCHAR(20) DEFAULT 'pending', approver_id INT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, decided_at VARCHAR(40),
@@ -323,6 +325,12 @@ def ensure_columns(c):
     req_cols = {r["Field"] for r in c.execute("SHOW COLUMNS FROM requests").fetchall()}
     if "contact" not in req_cols:
         c.execute("ALTER TABLE requests ADD COLUMN contact VARCHAR(120)")
+    if "biometric_id" not in existing:
+        c.execute("ALTER TABLE employees ADD COLUMN biometric_id VARCHAR(20)")
+        c.execute("ALTER TABLE employees ADD INDEX idx_emp_bio(biometric_id)")
+    att_cols = {r["Field"] for r in c.execute("SHOW COLUMNS FROM attendance").fetchall()}
+    if "source" not in att_cols:  # 'bio' = filled from the biometric machine, empty = entered by a person
+        c.execute("ALTER TABLE attendance ADD COLUMN source VARCHAR(10)")
 
 
 def _drop_all_tables(c):

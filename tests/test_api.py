@@ -349,6 +349,46 @@ def test_new_roles_admin_and_executive():
     # the Leadership department is listed once
     assert login("komal@example.com").get("/api/designations").get_json()["departments"].count("Leadership") == 1
 
+def test_biometric_import_links_and_overnight():
+    import biometric
+    ceo = login("ceo@example.com")
+    base = {"department": "Technical", "designation": "AI Engineer", "join_date": "2026-01-05", "password": "longenough1", "role": "employee"}
+    dan = ceo.post("/api/admin/employees", json={**base, "name": "Dan Day", "email": "dan@example.com", "biometric_id": "000000902"}).get_json()["id"]
+    nina = ceo.post("/api/admin/employees", json={**base, "name": "Nina Night", "email": "nina@example.com"}).get_json()["id"]
+    assert A.q("SELECT biometric_id b FROM employees WHERE id=?", (dan,), one=True)["b"] == "902"  # machine padding is dropped
+    head = "No\tMchn\tEnNo\tName\tMode\tIOMd\tDateTime\n"
+    rows = [("902", "dan day", "2026/05/04  10:58:00"), ("902", "dan day", "2026/05/04  10:58:01"), ("902", "dan day", "2026/05/04  20:05:00"),
+            ("901", "nina night", "2026/05/04  20:10:00"), ("901", "nina night", "2026/05/05  05:02:00"), ("901", "nina night", "2026/05/05  20:00:00"),
+            ("903", "zed unknown", "2026/05/05  11:00:00")]
+    text = head + "".join("%06d\t2\t%09d\t%s\t33\t0\t%s\n" % (i + 1, int(e), n, t) for i, (e, n, t) in enumerate(rows))
+    # only HR level can import
+    assert login("komal@example.com").post("/api/admin/biometric/import", json={"text": text}).status_code == 403
+    assert ceo.post("/api/admin/biometric/import", json={"text": "not a punch file"}).status_code == 400
+    r = ceo.post("/api/admin/biometric/import", json={"text": text}).get_json()
+    assert (r["read"], r["new"], r["machine_users"], r["date_from"], r["date_to"]) == (7, 7, 3, "2026-05-04", "2026-05-05")
+    assert r["inserted"] == 1 and r["unmatched"] == 2  # Dan is linked, Nina and Zed are not
+    assert [(d["date"], d["first_in"], d["last_out"], d["source"]) for d in A.q("SELECT * FROM attendance WHERE emp_id=?", (dan,))] == [("2026-05-04", "10:58", "20:05", "bio")]
+    # the machine names are only a guess: Nina matches by name, Zed matches nobody
+    st = ceo.get("/api/admin/biometric").get_json()
+    guess = {u["enno"]: u["suggest_id"] for u in st["unmatched"]}
+    assert guess == {"901": nina, "903": None} and st["punches"] == 7 and st["linked"] == 1
+    assert ceo.post("/api/admin/biometric/automatch").get_json()["linked"] == 1
+    # a shift that ends after midnight stays on the day it started
+    assert [(d["date"], d["first_in"], d["last_out"]) for d in A.q("SELECT * FROM attendance WHERE emp_id=? ORDER BY date", (nina,))] == [
+        ("2026-05-04", "20:10", "05:02"), ("2026-05-05", "20:00", "20:00")]
+    assert biometric.work_minutes("20:10", "05:02") == 532 and biometric.work_minutes("10:00", "19:00") == 540
+    # importing the same file again changes nothing, and what a person entered is never overwritten
+    again = ceo.post("/api/admin/biometric/import", json={"text": text}).get_json()
+    assert again["new"] == 0 and again["duplicates"] == 7 and again["inserted"] == 0
+    A.run("UPDATE attendance SET status='CL', source=NULL WHERE emp_id=? AND date='2026-05-04'", (dan,))
+    kept = ceo.post("/api/admin/biometric/import", json={"text": text}).get_json()
+    assert kept["kept_manual"] == 1
+    assert A.q("SELECT status s FROM attendance WHERE emp_id=? AND date='2026-05-04'", (dan,), one=True)["s"] == "CL"
+    # one machine id belongs to one person
+    assert ceo.patch("/api/admin/employees/%d" % nina, json={"biometric_id": "902"}).status_code == 400
+    assert ceo.patch("/api/admin/employees/%d" % nina, json={"biometric_id": "0901"}).status_code == 200
+
+
 def test_designation_master_list():
     c = login("komal@example.com")
     d = c.get("/api/designations").get_json()

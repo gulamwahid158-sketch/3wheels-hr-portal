@@ -16,6 +16,8 @@ const weekdayOf = (iso, style = "short") => new Date(iso + "T00:00").toLocaleDat
 const longDate = iso => new Date(iso + "T00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 const timeMins = t => { const m = /^(\d{1,2}):(\d{2})/.exec(String(t || "")); return m ? +m[1] * 60 + +m[2] : null; };
 const hhmm = x => x == null || isNaN(x) ? "-" : `${pad2(Math.floor(x / 60))}:${pad2(Math.round(x % 60))}`;
+// minutes between two HH:MM times; a night shift ends after midnight, so an earlier "out" means the next day
+const workMins = (a, b) => { const x = timeMins(a), y = timeMins(b); return x == null || y == null ? null : (y >= x ? y - x : y + 1440 - x); };
 const hour12 = h => `${h % 12 || 12}${h < 12 ? "am" : "pm"}`;
 // "11:00-20:00" -> { start: 660, end: 1200, code: "11T8", name: "11am To 8pm" } (null when the shift is not a fixed time range)
 function shiftInfo(shift) {

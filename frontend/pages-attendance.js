@@ -10,7 +10,7 @@ const LATE_GRACE = 15;                      // minutes allowed after shift start
 function attStats(days, shiftText, upTo) {
   const sh = shiftInfo(shiftText), rows = days.filter(d => d.date <= upTo);
   const present = rows.filter(d => d.status === "P");
-  const worked = present.filter(d => d.first_in && d.last_out).map(d => timeMins(d.last_out) - timeMins(d.first_in)).filter(x => x > 0);
+  const worked = present.filter(d => d.first_in && d.last_out).map(d => workMins(d.first_in, d.last_out)).filter(x => x > 0);
   const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
   const avgTotal = avg(worked);
   return {
@@ -64,11 +64,11 @@ P.attendance = async el => {
     };
     const grid = view === "grid"
       ? `<div class="ac-head">${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(x => `<div>${x}</div>`).join("")}</div><div class="ac-grid">${monthGrid(ym).map(cell).join("")}</div>`
-      : `<div class="tablewrap">${table([["Date", r => longDate(r.date)], ["Day", r => weekdayOf(r.date)], ["Status", r => badge(r.status), 1], ["First In", r => r.first_in || "-"], ["Last Out", r => r.last_out || "-"], ["Work Hrs", r => r.first_in && r.last_out ? hhmm(timeMins(r.last_out) - timeMins(r.first_in)) : "-"]], cur.days, "No attendance recorded for this month.")}</div>`;
+      : `<div class="tablewrap">${table([["Date", r => longDate(r.date)], ["Day", r => weekdayOf(r.date)], ["Status", r => badge(r.status), 1], ["First In", r => r.first_in || "-"], ["Last Out", r => r.last_out || "-"], ["Work Hrs", r => r.first_in && r.last_out ? hhmm(workMins(r.first_in, r.last_out)) : "-"]], cur.days, "No attendance recorded for this month.")}</div>`;
 
     // the chosen day
     const r = byDate[sel], inM = r && r.first_in ? timeMins(r.first_in) : null, outM = r && r.last_out ? timeMins(r.last_out) : null;
-    const total = inM != null && outM != null && outM > inM ? outM - inM : null;
+    const total = inM != null && outM != null && workMins(r.first_in, r.last_out) > 0 ? workMins(r.first_in, r.last_out) : null;
     const lateIn = inM != null && sh.start != null && inM > sh.start ? inM - sh.start : null;
     const earlyOut = outM != null && sh.end != null && outM < sh.end ? sh.end - outM : null;
     const brk = total != null && total > 300 ? BREAK_MIN : null;

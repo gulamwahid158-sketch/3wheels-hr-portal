@@ -716,7 +716,7 @@ P.admin = async el => {
   const ADMINS = ADMIN_ROLES;
   if (!ADMINS.includes(ME.role)) { el.innerHTML = '<div class="card err">Admin is only available to HR and Executive Leadership.</div>'; return; }
   let tab = 0;
-  const NAMES = ["📊 Overview", "👥 Employees", "🕒 Attendance", "✅ Leave Approvals", "📅 Casual Leave (CL)", "🎉 Holidays", "🎫 Tickets", "📄 Documents", "📧 Email Outbox", "📋 Attendance Overview"];
+  const NAMES = ["📊 Overview", "👥 Employees", "🕒 Attendance", "✅ Leave Approvals", "📅 Casual Leave (CL)", "🎉 Holidays", "🎫 Tickets", "📄 Documents", "📧 Email Outbox", "📋 Attendance Overview", "👆 Biometric"];
   const draw = async () => {
     let inner = "";
     if (tab === 0) {
@@ -770,6 +770,7 @@ P.admin = async el => {
         { n: "employment_type", label: "Employment type", type: "select", opts: [["Full-time", "Full-time"], ["Part-time", "Part-time"], ["Contract", "Contract"], ["Intern", "Intern"], ["Consultant", "Consultant"]], req: false },
         { n: "work_mode", label: "Work mode", type: "select", opts: [["On-site", "On-site"], ["Remote", "Remote"], ["Hybrid", "Hybrid"]], req: false },
         { n: "shift", label: "Shift", type: "select", opts: shiftOpts, req: false },
+        { n: "biometric_id", label: "Biometric machine ID", placeholder: "Number the machine shows for this person", req: false },
 
         { type: "section", label: "Personal Details" },
         { n: "personal_email", label: "Personal email", type: "email", req: false },
@@ -827,6 +828,7 @@ P.admin = async el => {
         { n: "employment_type", label: "Employment type", type: "select", opts: [["", "— Select —"], ["Full-time", "Full-time"], ["Part-time", "Part-time"], ["Contract", "Contract"], ["Intern", "Intern"], ["Consultant", "Consultant"]], value: ev.employment_type, req: false },
         { n: "work_mode", label: "Work mode", type: "select", opts: [["", "— Select —"], ["On-site", "On-site"], ["Remote", "Remote"], ["Hybrid", "Hybrid"]], value: ev.work_mode, req: false },
         { n: "shift", label: "Shift", type: "select", opts: shiftOpts, value: ev.shift, req: false },
+        { n: "biometric_id", label: "Biometric machine ID", value: ev.biometric_id || "", placeholder: "Number the machine shows for this person", req: false },
 
         { type: "section", label: "Personal Details" },
         { n: "personal_email", label: "Personal email", type: "email", value: ev.personal_email, req: false },
@@ -1194,13 +1196,67 @@ P.admin = async el => {
       </div>
       ${drillHtml}`;
     }
+    if (tab === 10) {
+      // ---- Biometric machine: import the punch file, link machine users to people ----
+      const [bio, emps] = await Promise.all([api("admin/biometric"), api("admin/employees")]);
+      const free = emps.filter(e => e.active && !e.biometric_id);
+      const res = draw._bioResult;
+      const summary = res ? `<div class="card" style="border-left:4px solid #2e7d32"><b>Import done.</b> Read ${res.read} punches (${esc(res.date_from)} to ${esc(res.date_to)}) from ${res.machine_users} machine users: ${res.new} new, ${res.duplicates} already stored${res.bad_lines ? `, ${res.bad_lines} unreadable lines` : ""}.<br>
+        Attendance: ${res.inserted} day(s) added, ${res.updated} refreshed, ${res.kept_manual} left alone because someone entered them by hand.${res.unmatched ? `<br><b>${res.unmatched}</b> machine user(s) are not linked to anyone yet (below).` : ""}</div>` : "";
+      const rowsHtml = bio.unmatched.map(u => `<tr>
+          <td>${esc(u.enno)}</td><td>${esc(u.name)}</td><td>${u.punches}</td><td>${esc(u.first_seen)} to ${esc(u.last_seen)}</td>
+          <td><select data-for="${esc(u.enno)}" style="min-width:220px"><option value="">— Choose employee —</option>${free.map(e => `<option value="${e.id}" ${e.id === u.suggest_id ? "selected" : ""}>${esc(e.emp_no)} — ${esc(e.name)}</option>`).join("")}</select></td>
+          <td><button class="btn sm" data-link="${esc(u.enno)}">Link</button></td></tr>`).join("");
+      inner = `<div class="card" style="border-left:4px solid var(--brand)">
+          <h2>👆 Biometric machine</h2>
+          <p class="mute">Save the punch file from the machine to a pen drive (Menu → Comm Set → U-down → Download GLog) and upload it here. The first punch of a day is taken as the check-in and the last punch as the check-out. Importing the same file again is safe.</p>
+          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><input type="file" id="bio-file" accept=".txt,.csv,.dat"><button class="btn" id="bio-go">Import punches</button></div>
+          <p class="mute" style="margin-top:10px">Stored so far: <b>${bio.punches}</b> punches from <b>${bio.users}</b> machine users${bio.date_to ? ` (${esc(bio.date_from)} to ${esc(bio.date_to)})` : ""}. Linked to employees: <b>${bio.linked}</b>.</p>
+        </div>${summary}
+        <div class="card"><h2>Machine users not linked yet (${bio.unmatched.length})</h2>
+          ${bio.unmatched.length ? `<p class="mute">A person's punches show in attendance once their machine ID is linked. Guesses based on the name are already chosen; check them, then press <b>Link all chosen</b>. You can also set the ID on the employee's edit page.</p>
+          <div style="display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap"><button class="btn" id="bio-all">Link all chosen</button><button class="btn sec" id="bio-auto">Auto-match by name</button></div>
+          <div class="tablewrap"><table><thead><tr><th>Machine ID</th><th>Name on machine</th><th>Punches</th><th>Seen</th><th>Employee</th><th></th></tr></thead><tbody>${rowsHtml}</tbody></table></div>`
+          : `<p class="mute">${bio.punches ? "Everyone on the machine is linked." : "Nothing imported yet."}</p>`}
+        </div>`;
+    }
     el.innerHTML = `<h1>HR Admin</h1>${tabs(NAMES, tab)}${inner}`;
     el.querySelectorAll("select[data-ddl]").forEach(enhanceSelect);
-    wireTabs(i => { tab = i; draw._aoMonth = null; draw.__aoDrill = null; draw._editDesig = null; draw._empView = null; draw._empEditId = null; draw._clEdit = null; draw(); });
+    wireTabs(i => { tab = i; draw._aoMonth = null; draw.__aoDrill = null; draw._editDesig = null; draw._empView = null; draw._empEditId = null; draw._clEdit = null; draw._bioResult = null; draw(); });
     wire("ae", "admin/employees", () => { toast("Member added & credentials sent to official email!"); draw._empView = "list"; draw(); }, d => ({ ...d, manager_id: d.manager_id ? +d.manager_id : null }));
     wire("atf", "admin/attendance", draw, d => ({ ...d, emp_id: +d.emp_id }));
     wire("ah", "admin/holidays", draw);
     wire("ad", "admin/documents", draw, d => ({ ...d, emp_id: d.emp_id ? +d.emp_id : null }));
+
+    if (tab === 10) {
+      const link = async (links) => {
+        try { const r = await api("admin/biometric/link", "POST", { links }); toast(`Linked ${r.linked}. ${r.inserted} attendance day(s) added.`); draw._bioResult = null; draw(); }
+        catch (er) { toast(er.message); }
+      };
+      $("#bio-go").onclick = async () => {
+        const f = $("#bio-file").files[0];
+        if (!f) { toast("Choose the GLog file first"); return; }
+        const b = $("#bio-go"); b.disabled = true; b.textContent = "Importing…";
+        try { draw._bioResult = await api("admin/biometric/import", "POST", { text: await f.text() }); draw(); }
+        catch (er) { toast(er.message); b.disabled = false; b.textContent = "Import punches"; }
+      };
+      el.querySelectorAll("[data-link]").forEach(b => b.onclick = () => {
+        const v = el.querySelector(`select[data-for="${b.dataset.link}"]`).value;
+        if (!v) { toast("Choose an employee first"); return; }
+        link([{ enno: b.dataset.link, emp_id: +v }]);
+      });
+      const all = $("#bio-all"); if (all) all.onclick = () => {
+        const links = [...el.querySelectorAll("select[data-for]")].filter(s => s.value).map(s => ({ enno: s.dataset.for, emp_id: +s.value }));
+        if (!links.length) { toast("Nothing chosen yet"); return; }
+        const ids = links.map(l => l.emp_id);
+        if (new Set(ids).size !== ids.length) { toast("The same employee is chosen for two machine users"); return; }
+        link(links);
+      };
+      const auto = $("#bio-auto"); if (auto) auto.onclick = async () => {
+        try { const r = await api("admin/biometric/automatch", "POST", {}); toast(`Matched ${r.linked} by name. ${r.inserted} attendance day(s) added.`); draw._bioResult = null; draw(); }
+        catch (er) { toast(er.message); }
+      };
+    }
 
     // Employees tab: list / add / edit sub-views
     el.querySelectorAll("[data-empview]").forEach(b => b.onclick = () => {
