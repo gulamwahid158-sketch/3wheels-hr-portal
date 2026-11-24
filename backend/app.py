@@ -163,9 +163,12 @@ def count_days(f, t, fs=1, ts=2):
 
 def balances(emp_id):
     out = []
+    grants = {}
+    for g_ in q("SELECT * FROM leave_grants WHERE emp_id=? ORDER BY id", (emp_id,)): grants.setdefault(g_["code"], g_)      # 3 queries in total, not 2 per leave type (the database is remote)
+    spent = {r["code"]: r["s"] for r in q("SELECT code, COALESCE(SUM(days),0) s FROM requests WHERE emp_id=? AND kind IN('leave','rh') AND status IN('approved','pending') GROUP BY code", (emp_id,))}
     for t in q("SELECT * FROM leave_types"):
-        g = q("SELECT * FROM leave_grants WHERE emp_id=? AND code=?", (emp_id, t["code"]), one=True) or {"granted": 0, "opening_used": 0}
-        used = q("SELECT COALESCE(SUM(days),0) s FROM requests WHERE emp_id=? AND code=? AND kind IN('leave','rh') AND status IN('approved','pending')", (emp_id, t["code"]), one=True)["s"]
+        g = grants.get(t["code"]) or {"granted": 0, "opening_used": 0}
+        used = spent.get(t["code"], 0)
         consumed = g["opening_used"] + used
         out.append(dict(code=t["code"], name=t["name"], granted=g["granted"], consumed=consumed, balance=g["granted"] - consumed))
     return out
@@ -547,9 +550,9 @@ def people(u):
     cl_grants = {g["emp_id"]: g for g in q("SELECT * FROM leave_grants WHERE code='CL'")}
     cl_used = {u_row["emp_id"]: u_row["s"] for u_row in q("SELECT emp_id, COALESCE(SUM(days),0) s FROM requests WHERE code='CL' AND kind IN('leave','rh') AND status IN('approved','pending') GROUP BY emp_id")}
 
+    names = {e["id"]: e["name"] for e in q("SELECT id, name FROM employees")}      # one query, not one per person (the database is remote)
     for r in rows:
-        mgr = q("SELECT name FROM employees WHERE id=?", (r["manager_id"],), one=True)
-        r["manager_name"] = mgr["name"] if mgr else None
+        r["manager_name"] = names.get(r["manager_id"])
         team = report_map.get(r["id"], [])
         r["team_size"] = len(team)
         r["team_members"] = team
