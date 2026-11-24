@@ -7,3 +7,9 @@ backend/peopledesk.db
 
 # Original greythr portal dumps (contain real employee data) — kept local only
 reference/
+
+# Biometric connector: logs and state files hold real punches, never commit them
+connector/*.log
+connector/pulled_*.txt
+connector/connector_queue.jsonl
+connector/connector_seen.txt

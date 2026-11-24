@@ -540,7 +540,7 @@ function setCrumb(parts) {
 P["my-info"] = async el => {
   const m = ME;
   el.innerHTML = `<h1>My Info</h1><div class="card"><div style="display:flex;gap:16px;align-items:center"><span class="avatar big">${esc(m.name[0])}</span><div><h2 style="margin:0">${esc(m.name)}</h2><span class="mute">${esc(m.designation)} · ${esc(m.department)}</span></div></div></div>
-  <div class="card grid">${[["Employee ID", m.emp_no], ["Email", m.email], ["Location", m.location], ["Joined", fdate(m.join_date)], ["Reports to", m.manager_name || "-"], ["Shift", m.shift], ["Skills", m.skills]].map(([k, v]) => `<div><span class="mute">${esc(k)}</span><div>${esc(v)}</div></div>`).join("")}</div>
+  <div class="card grid">${[["Employee ID", m.emp_no], ["Machine ID", m.biometric_id || "-"], ["Email", m.email], ["Location", m.location], ["Joined", fdate(m.join_date)], ["Reports to", m.manager_name || "-"], ["Shift", m.shift], ["Skills", m.skills]].map(([k, v]) => `<div><span class="mute">${esc(k)}</span><div>${esc(v)}</div></div>`).join("")}</div>
   <div class="card"><h2>Other</h2><a href="#/resignation">Resignation</a></div>`;
 };
 P.delegates = async el => {
@@ -897,6 +897,7 @@ P.admin = async el => {
           <h2>📋 Employee List</h2>
           ${table([
             ["ID", r => r.emp_no],
+            ["Machine ID", r => r.biometric_id ? esc(r.biometric_id) : "-"],
             ["Name", r => `<b>${esc(r.name)}</b>`, 1],
             ["Designation", r => esc(r.designation || "-")],
             ["Dept", r => r.department],
@@ -1122,8 +1123,8 @@ P.admin = async el => {
       if (selEmpId) {
         const detail = await api("admin/attendance-overview?month=" + aoMonth + "&emp_id=" + selEmpId);
         const selEmp = overview.find(e => e.emp_id === selEmpId);
-        const statusLabel = { P: "Present", A: "Absent", CL: "Casual Leave", CO: "Comp Off", LOP: "Loss of Pay", H: "Holiday", O: "Weekly Off" };
-        const statusColor = { P: "#388e3c", A: "#c62828", CL: "#1565c0", CO: "#6a1b9a", LOP: "#b71c1c", H: "#e65100", O: "#546e7a" };
+        const statusLabel = { P: "Present", A: "Absent", CL: "Casual Leave", CO: "Comp Off", LOP: "Loss of Pay", H: "Holiday", O: "Weekly Off", L: "Leave (no punch)", HD: "Half Day" };
+        const statusColor = { P: "#388e3c", A: "#c62828", CL: "#1565c0", CO: "#6a1b9a", LOP: "#b71c1c", H: "#e65100", O: "#546e7a", L: "#8e3a9d", HD: "#b8860b" };
         drillHtml = `
         <div class="card" style="border-left:4px solid var(--brand);margin-top:16px">
           <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">
@@ -1167,13 +1168,15 @@ P.admin = async el => {
             <th style="color:#b71c1c">⚠ LOP</th>
             <th style="color:#e65100">🎉 Holiday</th>
             <th style="color:#546e7a">📅 W/Off</th>
+            <th style="color:#8e3a9d" title="Working day with no punch">🟣 Leave</th>
+            <th style="color:#b8860b" title="Short day: part present, part leave">🌓 Half</th>
             <th>⏱ Hrs</th>
             <th>Total Days</th>
           </tr></thead>
           <tbody>
             ${overview.map(r => `
               <tr class="ao-row" data-eid="${r.emp_id}" style="cursor:pointer" title="Click to see day-by-day for ${esc(r.name)}">
-                <td><span class="mute">${esc(r.emp_no)}</span></td>
+                <td><span class="mute">${esc(r.emp_no)}</span><br><small class="mute" title="Biometric machine ID">Machine ${esc(r.biometric_id || "-")}</small></td>
                 <td><b>${esc(r.name)}</b><br><small class="mute">${esc(r.designation || "")} · <span class="badge ${esc(r.role)}">${esc(r.role.toUpperCase())}</span></small></td>
                 <td>${esc(r.department || "—")}</td>
                 <td style="text-align:center">${stBadge(r.present, "P", "#388e3c")}</td>
@@ -1183,10 +1186,12 @@ P.admin = async el => {
                 <td style="text-align:center">${stBadge(r.lop, "LOP", "#b71c1c")}</td>
                 <td style="text-align:center">${stBadge(r.holiday, "H", "#e65100")}</td>
                 <td style="text-align:center">${stBadge(r.weekly_off, "O", "#546e7a")}</td>
+                <td style="text-align:center">${stBadge(r.leave_no_punch, "L", "#8e3a9d")}</td>
+                <td style="text-align:center">${stBadge(r.half_day, "HD", "#b8860b")}</td>
                 <td style="text-align:center;font-weight:600">${r.working_hours}h</td>
                 <td style="text-align:center">${r.total_days}</td>
               </tr>`).join("")}
-            ${!overview.length ? `<tr><td colspan="12" class="mute" style="text-align:center;padding:20px">No attendance data found for ${esc(aoMonth)}.</td></tr>` : ""}
+            ${!overview.length ? `<tr><td colspan="14" class="mute" style="text-align:center;padding:20px">No attendance data found for ${esc(aoMonth)}.</td></tr>` : ""}
           </tbody>
         </table></div>
         <p class="mute" style="margin-top:8px;font-size:12px">

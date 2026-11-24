@@ -780,3 +780,13 @@ button.btn.sec:hover{background:var(--brand-l)}
 .ep-list button:hover{background:var(--bg)}
 .ep-list small{color:var(--mute)}
 .ep-list p{margin:0;padding:10px 14px}
+
+/* ---- Leave (no punch) / Half Day, and the + to regularize ---- */
+.s-L{background:rgba(171,71,188,.14)}.s-L .ac-st{color:#8e3a9d}
+.s-HD{background:linear-gradient(135deg,rgba(76,175,80,.2) 0 50%,rgba(171,71,188,.16) 50% 100%)}.s-HD .ac-st{color:#6b5b2e}
+.rg-was{margin-left:8px;color:var(--mute,#8a94a6);font-size:12px;font-weight:400}
+.mc-d.gap{position:relative}
+.mc-d.gap::after{content:none}
+.mc-plus{position:absolute;top:-2px;right:-2px;display:grid;place-items:center;width:15px;height:15px;border:1px solid var(--sky,#2f6fed);border-radius:50%;background:var(--card,#fff);color:var(--sky,#2f6fed);font:700 11px/1 system-ui,sans-serif;font-style:normal;pointer-events:none}
+.mc-d:hover .mc-plus,.mc-d.picked .mc-plus{background:var(--sky,#2f6fed);color:#fff}
+.badge.HD,.badge.L{background:rgba(171,71,188,.16);color:#7b2e8c}

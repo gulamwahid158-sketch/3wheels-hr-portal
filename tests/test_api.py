@@ -40,10 +40,45 @@ def test_validation():
 def test_regularization_and_attendance():
     k, m = login("komal@example.com"), login("manager@example.com")
     a = k.get("/api/attendance?month=2026-11").get_json()
-    assert a["exceptions"] == ["2026-11-20"] and a["summary"]["absent"] == 1 and a["summary"]["leave"] == 3
+    # demo data ends on 21 Nov; days after it with no punch are Leave now, so only check what the demo itself sets
+    assert "2026-11-20" in a["exceptions"] and a["summary"]["absent"] == 1 and a["summary"]["leave"] >= 3
     r = k.post("/api/regularization", json={"kind": "regularize", "date": "2026-11-20", "in_time": "11:00", "out_time": "20:00", "reason": "forgot"}).get_json()
     assert m.post("/api/review/regularization/%d" % r["id"], json={"action": "approve"}).status_code == 200
     assert k.get("/api/attendance?month=2026-11").get_json()["summary"]["absent"] == 0
+
+def test_no_punch_half_day_and_regularize_from_exception():
+    import biometric
+    assert [biometric.classify(a, b) for a, b in (("10:00", "19:00"), ("10:00", "14:30"), ("11:00", "11:00"), ("10:00", "12:59"), ("20:10", "05:02"))] == ["P", "HD", "L", "L", "P"]
+    ceo = login("ceo@example.com")
+    nia = ceo.post("/api/admin/employees", json={"department": "Technical", "designation": "AI Engineer", "join_date": "2026-05-18", "password": "longenough1",
+                   "role": "employee", "name": "Nia Noon", "email": "nia@example.com", "biometric_id": "8801"}).get_json()["id"]
+    def punch(day, *times):
+        for t in times: A.run("INSERT IGNORE INTO biometric_punches(enno,punch_at,name,machine) VALUES('8801',?,'nia','2')", ("%s %s:00" % (day, t),))
+    punch("2026-09-01", "10:00", "19:00"); punch("2026-09-02", "10:00", "14:30"); punch("2026-09-03", "11:00")      # full day, half day, one punch only
+    A.run("INSERT INTO requests(emp_id,kind,code,from_date,to_date,days,reason,status) VALUES(?,?,?,?,?,?,?,?)", (nia, "leave", "CL", "2026-09-07", "2026-09-07", 1, "trip", "approved"))
+    A.rebuild_attendance(nia)
+    n = A.app.test_client(); assert n.post("/api/login", json={"email": "nia@example.com", "password": "longenough1"}).status_code == 200
+    a = n.get("/api/attendance?month=2026-09").get_json()
+    st = {d["date"]: d["status"] for d in a["days"]}
+    assert (st["2026-09-01"], st["2026-09-02"], st["2026-09-03"]) == ("P", "HD", "L")
+    assert st["2026-09-04"] == "L"                      # Friday, nobody punched: Leave
+    assert st["2026-09-06"] == "H"                      # Sunday
+    assert st["2026-09-07"] == "CL"                     # approved leave is kept, not turned into Leave (no punch)
+    assert a["summary"]["half_day"] == 1 and {"2026-09-02", "2026-09-03", "2026-09-04"} <= set(a["exceptions"]) and "2026-09-07" not in a["exceptions"]
+    ov = next(r for r in ceo.get("/api/admin/attendance-overview?month=2026-09").get_json() if r["emp_id"] == nia)
+    assert ov["half_day"] == 1 and ov["leave_no_punch"] >= 2 and ov["present"] == 1
+    # regularize a no-punch day, a half day and a one-punch day: the approved times replace what the machine said
+    for day in ("2026-09-02", "2026-09-03", "2026-09-04"):
+        r = n.post("/api/regularization", json={"kind": "regularize", "date": day, "in_time": "10:00", "out_time": "19:00", "reason": "was in office"}).get_json()
+        assert ceo.post("/api/review/regularization/%d" % r["id"], json={"action": "approve"}).status_code == 200
+    A.rebuild_attendance(nia)                           # importing again must not undo an approved regularization
+    rows = {d["date"]: d for d in n.get("/api/attendance?month=2026-09").get_json()["days"]}
+    for day in ("2026-09-02", "2026-09-03", "2026-09-04"):
+        assert (rows[day]["status"], rows[day]["first_in"], rows[day]["last_out"]) == ("P", "10:00", "19:00"), day
+    assert n.get("/api/attendance?month=2026-09").get_json()["summary"]["half_day"] == 0
+    A.run("DELETE FROM biometric_punches WHERE enno='8801'")          # other tests count the stored punches
+    A.run("UPDATE employees SET biometric_id=NULL WHERE id=?", (nia,))   # ... and the linked employees
+
 
 def test_misc_endpoints():
     k = login("komal@example.com")
@@ -387,6 +422,27 @@ def test_biometric_import_links_and_overnight():
     # one machine id belongs to one person
     assert ceo.patch("/api/admin/employees/%d" % nina, json={"biometric_id": "902"}).status_code == 400
     assert ceo.patch("/api/admin/employees/%d" % nina, json={"biometric_id": "0901"}).status_code == 200
+
+
+def test_biometric_live_ingest():
+    ceo = login("ceo@example.com")
+    emp = ceo.post("/api/admin/employees", json={"department": "Technical", "designation": "AI Engineer", "join_date": "2026-01-05", "password": "longenough1",
+                   "role": "employee", "name": "Liv Live", "email": "liv@example.com", "biometric_id": "0777"}).get_json()["id"]
+    c = A.app.test_client()
+    body = {"punches": [{"enno": "000000777", "at": "2026-06-10 10:00:00", "machine": "2"}, {"enno": "777", "at": "2026-06-10 19:30:00"}, {"enno": "", "at": "x"}]}
+    assert c.post("/api/biometric/ingest", json=body).status_code == 503          # off until a token is configured
+    os.environ["BIOMETRIC_TOKEN"] = "test-secret-1234567890"
+    try:
+        assert c.post("/api/biometric/ingest", json=body).status_code == 401
+        assert c.post("/api/biometric/ingest", json=body, headers={"Authorization": "Bearer wrong-wrong-wrong-1"}).status_code == 401
+        h = {"Authorization": "Bearer test-secret-1234567890"}
+        assert c.post("/api/biometric/ingest", json={"punches": []}, headers=h).status_code == 400
+        r = c.post("/api/biometric/ingest", json=body, headers=h).get_json()
+        assert r == {"received": 2, "new": 2}
+        assert c.post("/api/biometric/ingest", json=body, headers=h).get_json()["new"] == 0   # machine repeats punches
+        assert [(d["date"], d["first_in"], d["last_out"]) for d in A.q("SELECT * FROM attendance WHERE emp_id=?", (emp,))] == [("2026-06-10", "10:00", "19:30")]
+    finally:
+        os.environ.pop("BIOMETRIC_TOKEN")
 
 
 def test_designation_master_list():

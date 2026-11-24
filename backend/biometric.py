@@ -82,6 +82,17 @@ def work_minutes(first_in, last_out):
     return d if d >= 0 else d + 24 * 60
 
 
+# How a finished day is judged from its first and last punch (the machine has no in/out, so hours between them decide).
+FULL_DAY_MIN = 6 * 60      # at least this long between first and last punch = Present
+HALF_DAY_MIN = 3 * 60      # at least this long (but less than a full day) = Half Day; anything shorter, or one punch only = Leave
+
+
+def classify(first_in, last_out):
+    """'P' present, 'HD' half day, 'L' leave (too short, or a single punch)."""
+    m = work_minutes(first_in, last_out)
+    return "P" if m >= FULL_DAY_MIN else "HD" if m >= HALF_DAY_MIN else "L"
+
+
 def suggest_employee(machine_name, employees):
     """Best guess for who a machine user is: the machine cuts names to ~14 characters, so match
     on the start of the portal name. Returns the employee id only when exactly one fits."""

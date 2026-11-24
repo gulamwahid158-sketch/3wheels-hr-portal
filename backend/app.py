@@ -349,6 +349,9 @@ def holidays(u): return jsonify(q("SELECT * FROM holidays ORDER BY date"))
 @auth()
 def attendance(u):
     m = request.args.get("month", date.today().strftime("%Y-%m"))
+    try: datetime.strptime(m, "%Y-%m")
+    except ValueError: raise ValueError("Invalid month, expected YYYY-MM")
+    settle_days([u["id"]], m)          # no punch = Leave, short day = Half Day, before the month is read
     rows = q("SELECT * FROM attendance WHERE emp_id=? AND substr(date,1,7)=? ORDER BY date", (u["id"], m))
     work = [r for r in rows if r["status"] == "P"]
 
@@ -359,10 +362,11 @@ def attendance(u):
     fmt = lambda x: "%02d:%02d" % divmod(int(x), 60)
     shift_start = mins(u["shift"].split("-")[0])
     summary = dict(present=len(work), absent=sum(r["status"] == "A" for r in rows), leave=sum(r["status"] in ("CL", "L", "CO") for r in rows),
+                   half_day=sum(r["status"] == "HD" for r in rows),
                    holidays=sum(r["status"] == "H" for r in rows), late_in=sum(mins(r["first_in"]) > shift_start + 15 for r in work),
                    avg_first_in=fmt(avg_in) if work else "-", avg_last_out=fmt(avg_out) if work else "-",
                    avg_work_hrs=("%.2f" % (avg_work / 60)) if work else "-")
-    exc = [r["date"] for r in rows if r["status"] == "A"]
+    exc = [r["date"] for r in rows if r["status"] in ("A", "L", "HD")]      # days that can be regularized
     return jsonify(days=rows, summary=summary, exceptions=exc, shift=u["shift"])
 
 
@@ -531,7 +535,7 @@ def designations_master(u):
 @auth()
 def people(u):
     s = "%" + request.args.get("q", "") + "%"
-    rows = q("SELECT id,emp_no,name,email,department,designation,location,join_date,substr(dob,6) dob,skills,manager_id,role FROM employees WHERE active=1 AND (name LIKE ? OR department LIKE ? OR emp_no LIKE ?) ORDER BY name", (s, s, s))
+    rows = q("SELECT id,emp_no,biometric_id,name,email,department,designation,location,join_date,substr(dob,6) dob,skills,manager_id,role FROM employees WHERE active=1 AND (name LIKE ? OR department LIKE ? OR emp_no LIKE ?) ORDER BY name", (s, s, s))
     
     # Pre-fetch all direct reports for team counts and members
     all_reports = q("SELECT id, name, manager_id FROM employees WHERE active=1 AND manager_id IS NOT NULL")
@@ -858,11 +862,19 @@ def execute_decision(table, typ, r, rid, action, decider):
             elif r["kind"] == "cancel":
                 c.execute("UPDATE requests SET status='cancelled',decided_at=? WHERE id=?", (now, r["ref_id"]))
                 d_, t_ = pdate(r["from_date"]), pdate(r["to_date"])
-                while d_ <= t_:
-                    c.execute("UPDATE attendance SET status='P' WHERE emp_id=? AND date=? AND status IN('CL','CO')", (r["emp_id"], d_.isoformat()))
+                while d_ <= t_:    # leave cancelled: back to Present if there are punch times, else back to Leave (no punch)
+                    c.execute("UPDATE attendance SET status='P' WHERE emp_id=? AND date=? AND status IN('CL','CO') AND first_in IS NOT NULL", (r["emp_id"], d_.isoformat()))
+                    c.execute("UPDATE attendance SET status='L',source='auto' WHERE emp_id=? AND date=? AND status IN('CL','CO') AND first_in IS NULL", (r["emp_id"], d_.isoformat()))
                     d_ += timedelta(days=1)
         elif table == "regularizations" and r["kind"] == "regularize":
-            c.execute("UPDATE attendance SET status='P',first_in=?,last_out=? WHERE emp_id=? AND date=?", (r["in_time"], r["out_time"], r["emp_id"], r["date"]))
+            # The approved times win over the machine: source is cleared so a later import never overwrites them.
+            cur = c.execute("SELECT status FROM attendance WHERE emp_id=? AND date=?", (r["emp_id"], r["date"])).fetchone()
+            if cur is None:
+                c.execute("INSERT INTO attendance(emp_id,date,status,first_in,last_out,source) VALUES(?,?,'P',?,?,NULL)", (r["emp_id"], r["date"], r["in_time"], r["out_time"]))
+            elif cur["status"] in ("H", "O"):          # worked on a holiday / weekly off: keep the holiday, record the time
+                c.execute("UPDATE attendance SET first_in=?,last_out=?,source=NULL WHERE emp_id=? AND date=?", (r["in_time"], r["out_time"], r["emp_id"], r["date"]))
+            else:
+                c.execute("UPDATE attendance SET status='P',first_in=?,last_out=?,source=NULL WHERE emp_id=? AND date=?", (r["in_time"], r["out_time"], r["emp_id"], r["date"]))
     c.commit(); c.close()
     notify(r["emp_id"], "Your %s request was %s by %s" % (typ, st, decider["name"]))
 
@@ -1231,6 +1243,7 @@ def a_attendance_overview(u):
         datetime.strptime(month_param, "%Y-%m")
     except ValueError:
         raise ValueError("Invalid month format, expected YYYY-MM")
+    settle_days(None, month_param)      # no punch = Leave, short day = Half Day
 
     # --- Single employee drill-down: return day-by-day rows ---
     if emp_param:
@@ -1257,7 +1270,7 @@ def a_attendance_overview(u):
 
     # Pull all active employees
     emps = q("""
-        SELECT e.id, e.emp_no, e.name, e.department, e.designation, e.role,
+        SELECT e.id, e.emp_no, e.biometric_id, e.name, e.department, e.designation, e.role,
                m.name manager_name
         FROM employees e
         LEFT JOIN employees m ON m.id = e.manager_id
@@ -1265,7 +1278,7 @@ def a_attendance_overview(u):
         ORDER BY e.emp_no
     """)
 
-    STATUS_CODES = ["P", "A", "CL", "CO", "LOP", "H", "O"]
+    STATUS_CODES = ["P", "A", "CL", "CO", "LOP", "H", "O", "L", "HD"]
 
     # Group attendance by emp_id
     from collections import defaultdict
@@ -1300,6 +1313,7 @@ def a_attendance_overview(u):
         result.append({
             "emp_id": emp["id"],
             "emp_no": emp["emp_no"],
+            "biometric_id": emp["biometric_id"],
             "name": emp["name"],
             "department": emp["department"],
             "designation": emp["designation"],
@@ -1313,6 +1327,8 @@ def a_attendance_overview(u):
             "lop": counts["LOP"],
             "holiday": counts["H"],
             "weekly_off": counts["O"],
+            "leave_no_punch": counts["L"],
+            "half_day": counts["HD"],
             "working_hours": working_hours,
             "month": month_param
         })
@@ -1327,6 +1343,7 @@ def _attendance_export_data(month):
         datetime.strptime(month, "%Y-%m")
     except ValueError:
         raise ValueError("Invalid month format, expected YYYY-MM")
+    settle_days(None, month)
 
     emps = q("""
         SELECT e.id, e.emp_no, e.name, e.department, e.designation, e.role,
@@ -1348,7 +1365,7 @@ def _attendance_export_data(month):
     for row in att_rows:
         by_emp.setdefault(row["emp_id"], []).append(row)
 
-    status_codes = ("P", "A", "CL", "CO", "LOP", "H", "O")
+    status_codes = ("P", "A", "CL", "CO", "LOP", "H", "O", "L", "HD")
     out = []
     for emp in emps:
         recs = by_emp.get(emp["id"], [])
@@ -1378,6 +1395,8 @@ def _attendance_export_data(month):
             "lop": counts["LOP"],
             "holiday": counts["H"],
             "weekly_off": counts["O"],
+            "leave_no_punch": counts["L"],
+            "half_day": counts["HD"],
             "working_hours": round(total_working_mins / 60, 1),
             "month": month,
             "days": recs,
@@ -1407,6 +1426,8 @@ def a_attendance_export(u):
         "H": PatternFill("solid", fgColor="D9D9D9"),
         "O": PatternFill("solid", fgColor="F2F2F2"),
         "CO": PatternFill("solid", fgColor="EDEDED"),
+        "L": PatternFill("solid", fgColor="E4D1F0"),
+        "HD": PatternFill("solid", fgColor="FFE699"),
     }
     status_fonts = {
         "P": Font(color="006100"),
@@ -1416,6 +1437,8 @@ def a_attendance_export(u):
         "H": Font(color="595959"),
         "O": Font(color="808080"),
         "CO": Font(color="595959"),
+        "L": Font(color="5B2C83"),
+        "HD": Font(color="7F6000"),
     }
 
     wb = Workbook()
@@ -1426,7 +1449,7 @@ def a_attendance_export(u):
     summary_headers = [
         "Emp ID", "Name", "Designation", "Department", "Role", "Manager",
         "Present (P)", "Absent (A)", "Casual Leave (CL)", "Comp Off (CO)",
-        "Loss of Pay (LOP)", "Holiday (H)", "Weekly Off (O)",
+        "Loss of Pay (LOP)", "Holiday (H)", "Weekly Off (O)", "Leave - no punch (L)", "Half Day (HD)",
         "Working Hours (hrs)", "Total Days Recorded", "Month",
     ]
     ws.append(summary_headers)
@@ -1435,7 +1458,7 @@ def a_attendance_export(u):
             r["emp_no"], r["name"], r["designation"] or "", r["department"] or "",
             (r["role"] or "").upper(), r["manager_name"],
             r["present"], r["absent"], r["casual_leave"], r["comp_off"],
-            r["lop"], r["holiday"], r["weekly_off"],
+            r["lop"], r["holiday"], r["weekly_off"], r["leave_no_punch"], r["half_day"],
             r["working_hours"], r["total_days"], r["month"],
         ])
     for cell in ws[1]:
@@ -1447,11 +1470,11 @@ def a_attendance_export(u):
         for cell in row:
             cell.border = border
     for i, width in enumerate(
-        [10, 22, 24, 18, 10, 20, 12, 12, 16, 14, 16, 12, 14, 18, 20, 12], 1
+        [10, 22, 24, 18, 10, 20, 12, 12, 16, 14, 16, 12, 14, 18, 14, 18, 20, 12], 1
     ):
         ws.column_dimensions[get_column_letter(i)].width = width
     ws.freeze_panes = "A2"
-    ws.auto_filter.ref = "A1:P%d" % (len(data) + 1)
+    ws.auto_filter.ref = "A1:R%d" % (len(data) + 1)
 
     # ---- Sheet 2: Attendance Grid (employees as rows, dates as columns) ----
     ws2 = wb.create_sheet("Attendance Grid")
@@ -1464,7 +1487,7 @@ def a_attendance_export(u):
     grid_headers = (
         ["Emp ID", "Name", "Designation", "Department"]
         + date_labels
-        + ["Present", "Absent", "CL", "CO", "LOP", "Holiday", "Weekly Off",
+        + ["Present", "Absent", "CL", "CO", "LOP", "Holiday", "Weekly Off", "Leave (L)", "Half Day",
            "Working Hours", "Total Days"]
     )
     ws2.append(grid_headers)
@@ -1476,8 +1499,8 @@ def a_attendance_export(u):
             row.append(rec["status"] if rec else "")
         row += [
             r["present"], r["absent"], r["casual_leave"], r["comp_off"],
-            r["lop"], r["holiday"], r["weekly_off"], r["working_hours"],
-            r["total_days"],
+            r["lop"], r["holiday"], r["weekly_off"], r["leave_no_punch"], r["half_day"],
+            r["working_hours"], r["total_days"],
         ]
         ws2.append(row)
 
@@ -1489,7 +1512,7 @@ def a_attendance_export(u):
 
     date_start_col = 5
     date_end_col = 4 + days_in_month
-    summary_end_col = date_end_col + 9
+    summary_end_col = date_end_col + 11
     for row_idx in range(2, len(data) + 2):
         for col_idx in range(date_start_col, date_end_col + 1):
             cell = ws2.cell(row=row_idx, column=col_idx)
@@ -1510,7 +1533,7 @@ def a_attendance_export(u):
     ws2.column_dimensions["D"].width = 18
     for col_idx in range(date_start_col, date_end_col + 1):
         ws2.column_dimensions[get_column_letter(col_idx)].width = 7
-    for offset, width in enumerate([9, 8, 6, 6, 6, 8, 10, 14, 10]):
+    for offset, width in enumerate([9, 8, 6, 6, 6, 8, 10, 10, 10, 14, 10]):
         ws2.column_dimensions[get_column_letter(date_end_col + 1 + offset)].width = width
     ws2.freeze_panes = "E2"
     ws2.auto_filter.ref = "A1:%s%d" % (
@@ -1523,7 +1546,7 @@ def a_attendance_export(u):
     legend = [
         ("P", "Present"), ("A", "Absent"), ("CL", "Casual Leave"),
         ("LOP", "Loss of Pay"), ("H", "Holiday"), ("O", "Weekly Off"),
-        ("CO", "Comp Off"),
+        ("CO", "Comp Off"), ("L", "Leave (no punch)"), ("HD", "Half Day"),
     ]
     for idx, (code, label) in enumerate(legend):
         code_cell = ws2.cell(row=legend_row, column=2 + idx * 2, value=code)
@@ -1626,8 +1649,8 @@ def a_attendance_mark(u):
         raise ValueError("HR cannot modify executive attendance")
     pdate(j["date"])
     st = j["status"].strip().upper()
-    if st not in ("P", "A", "H", "O", "CL", "CO", "LOP"):
-        raise ValueError("Invalid status (use P, A, H, O, CL, CO, or LOP)")
+    if st not in ("P", "A", "H", "O", "CL", "CO", "LOP", "L", "HD"):
+        raise ValueError("Invalid status (use P, A, H, O, CL, CO, LOP, L or HD)")
     fi = j.get("first_in")
     lo = j.get("last_out")
     if st == "P":
@@ -1668,22 +1691,84 @@ def rebuild_attendance(emp_id=None):
     have = {(r["emp_id"], r["date"]): r for r in q(
         "SELECT emp_id, date, status, first_in, source FROM attendance WHERE emp_id IN (%s)" % ",".join("?" * len(emps)), [e["id"] for e in emps])}
     ins, upd = [], []
+    today_iso = date.today().isoformat()
     for enno, ts in times.items():
         eid = owner[enno]
         for day, (fi, lo) in biometric.derive_days(ts).items():
             cur = have.get((eid, day))
-            if cur is None: ins.append((eid, day, "P", fi, lo, "bio"))
-            elif cur["source"] == "bio" or (cur["status"] in ("H", "O") and not cur["first_in"]): upd.append((fi, lo, "bio", eid, day))
+            judged = biometric.classify(fi, lo) if day < today_iso else "P"      # today is still in progress
+            if cur is None: ins.append((eid, day, judged, fi, lo, "bio"))
+            elif cur["source"] in ("bio", "auto"):                                  # machine / system rows follow the machine
+                upd.append((judged if cur["status"] in ("P", "HD", "L") else cur["status"], fi, lo, "bio", eid, day))
+            elif cur["status"] in ("H", "O") and not cur["first_in"]: upd.append((cur["status"], fi, lo, "bio", eid, day))
             else: stats["kept_manual"] += 1
     c = db.conn()
     try:
         if ins: c.executemany("INSERT IGNORE INTO attendance(emp_id,date,status,first_in,last_out,source) VALUES(?,?,?,?,?,?)", ins)
-        if upd: c.executemany("UPDATE attendance SET first_in=?,last_out=?,source=? WHERE emp_id=? AND date=?", upd)
+        if upd: c.executemany("UPDATE attendance SET status=?,first_in=?,last_out=?,source=? WHERE emp_id=? AND date=?", upd)
         c.commit()
     finally:
         c.close()
     stats["inserted"], stats["updated"] = len(ins), len(upd)
     return stats
+
+
+COMPANY_START = "2026-05-18"      # people with no joining date are counted from here
+
+
+def settle_days(emp_ids=None, month=None):
+    """Make the attendance table complete for the finished days of a month (before today):
+      * a day without any punch becomes Leave ('L') (only from the day the machine was first used), or the approved leave that covers it;
+      * Sundays and public holidays become 'H' when they have no row yet (e.g. for someone who joined later);
+      * a day made from machine punches is judged Present / Half Day / Leave from its hours.
+    Anything a person entered (source empty) is never changed. Safe to call again and again."""
+    month = month or date.today().strftime("%Y-%m")
+    y, m = int(month[:4]), int(month[5:7])
+    first, last = date(y, m, 1), date(y, m, calendar.monthrange(y, m)[1])
+    end = min(last, date.today() - timedelta(days=1))
+    if end < first: return 0
+    where, args = "active=1", []
+    if emp_ids: where += " AND id IN (%s)" % ",".join("?" * len(emp_ids)); args += list(emp_ids)
+    emps = q("SELECT id, join_date FROM employees WHERE " + where, args)
+    if not emps: return 0
+    hol = {h["date"] for h in q("SELECT date FROM holidays WHERE restricted=0 AND substr(date,1,7)=?", (month,))}
+    first_punch = q("SELECT MIN(punch_at) m FROM biometric_punches", one=True)["m"]
+    tracked_from = str(first_punch)[:10] if first_punch else None      # before the machine was in use a missing punch means nothing
+    ids = [e["id"] for e in emps]; ph = ",".join("?" * len(ids))
+    have = {(r["emp_id"], r["date"]): r for r in q(
+        "SELECT emp_id, date, status, first_in, last_out, source FROM attendance WHERE substr(date,1,7)=? AND emp_id IN (%s)" % ph, [month] + ids)}
+    leave = {}
+    for r in q("SELECT emp_id, code, from_date, to_date FROM requests WHERE kind='leave' AND status='approved' AND from_date<=? AND to_date>=? AND emp_id IN (%s)" % ph,
+               [last.isoformat(), first.isoformat()] + ids):
+        d_ = max(pdate(r["from_date"]), first)
+        while d_ <= min(pdate(r["to_date"]), last):
+            leave[(r["emp_id"], d_.isoformat())] = r["code"] if r["code"] != "LOP" else "A"
+            d_ += timedelta(days=1)
+    ins, upd = [], []
+    d_ = first
+    while d_ <= end:
+        iso = d_.isoformat(); off = d_.weekday() == 6 or iso in hol
+        if tracked_from and iso < tracked_from:      # attendance starts with the first stored punch; nothing is made up before it
+            d_ += timedelta(days=1); continue
+        for e in emps:
+            if iso < (e["join_date"] or COMPANY_START): continue
+            cur = have.get((e["id"], iso))
+            if cur is None:
+                if off: ins.append((e["id"], iso, "H", None))
+                elif (e["id"], iso) in leave: ins.append((e["id"], iso, leave[(e["id"], iso)], None))
+                elif tracked_from and iso >= tracked_from: ins.append((e["id"], iso, "L", "auto"))
+            elif cur["source"] == "bio" and cur["status"] in ("P", "HD", "L") and cur["first_in"]:
+                judged = biometric.classify(cur["first_in"], cur["last_out"] or cur["first_in"])
+                if judged != cur["status"]: upd.append((judged, e["id"], iso))
+        d_ += timedelta(days=1)
+    c = db.conn()
+    try:
+        if ins: c.executemany("INSERT IGNORE INTO attendance(emp_id,date,status,first_in,last_out,source) VALUES(?,?,?,NULL,NULL,?)", ins)
+        if upd: c.executemany("UPDATE attendance SET status=? WHERE emp_id=? AND date=?", upd)
+        c.commit()
+    finally:
+        c.close()
+    return len(ins) + len(upd)
 
 
 def bio_unmatched():
@@ -1743,6 +1828,42 @@ def a_bio_import(u):
     return jsonify(read=len(punches), new=new, duplicates=len(punches) - new, bad_lines=bad, machine_users=len({p["enno"] for p in punches}),
                    date_from=min(p["at"] for p in punches).strftime("%Y-%m-%d"), date_to=max(p["at"] for p in punches).strftime("%Y-%m-%d"),
                    unmatched=len(bio_unmatched()), **stats)
+
+
+@app.post("/api/biometric/ingest")
+def bio_ingest():
+    """Live punches from the connector that runs next to the machine. Authenticated by a shared secret
+    (env BIOMETRIC_TOKEN), not by a login. Body: {"punches":[{"enno":"5","name":"..","at":"2026-11-23 10:58:00","machine":"2"}]}"""
+    import hmac
+    secret = os.environ.get("BIOMETRIC_TOKEN", "")
+    if len(secret) < 16: return jsonify(error="Live punch intake is not enabled"), 503
+    auth_h = request.headers.get("Authorization", "")
+    given = auth_h[7:] if auth_h.startswith("Bearer ") else ""
+    if not hmac.compare_digest(given.encode(), secret.encode()): return jsonify(error="Bad token"), 401
+    rows = (request.get_json(silent=True) or {}).get("punches")
+    if not isinstance(rows, list) or not rows or len(rows) > 1000: return jsonify(error="Send 1 to 1000 punches"), 400
+    clean = []
+    for p in rows:
+        try:
+            at = datetime.strptime(str(p["at"])[:19], "%Y-%m-%d %H:%M:%S")
+            enno = biometric.norm_id(p["enno"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        if enno: clean.append((enno, at, str(p.get("name") or "")[:120], str(p.get("machine") or "")[:10]))
+    if not clean: return jsonify(error="No valid punches"), 400
+    before = q("SELECT COUNT(*) c FROM biometric_punches", one=True)["c"]
+    c = db.conn()
+    try:
+        c.executemany("INSERT IGNORE INTO biometric_punches(enno,punch_at,name,machine) VALUES(?,?,?,?)", clean)
+        c.commit()
+    finally:
+        c.close()
+    new = q("SELECT COUNT(*) c FROM biometric_punches", one=True)["c"] - before
+    if new:
+        ids = list({x[0] for x in clean})
+        for e in q("SELECT id FROM employees WHERE active=1 AND biometric_id IN (%s)" % ",".join("?" * len(ids)), ids):
+            rebuild_attendance(e["id"])
+    return jsonify(received=len(clean), new=new)
 
 
 @app.post("/api/admin/biometric/link")
@@ -1953,6 +2074,29 @@ def exec_summary(u):
         locations=locations
     )
 
+
+@app.post("/api/attendance/punch")
+@auth()
+def attendance_punch(u):
+    j = body("emp_id", "date", "status")
+    run("INSERT INTO attendance(emp_id, date, status) VALUES(?,?,?)", (int(j["emp_id"]), j["date"], j["status"]))
+    return jsonify(ok=True)
+
+@app.post("/api/device/push")
+def device_push():
+    data = request.get_json(silent=True) or {}
+    # Log raw payload for protocol analysis
+    import logging
+    logging.info("DEVICE PUSH: %s", data)
+    # realtime_glog contains base64 attendance block
+    if data.get("request_code") == "realtime_glog":
+        try:
+            import base64
+            blk = base64.b64decode(data.get("block", ""))
+            logging.info("GLOG BLOCK: %s", blk)
+        except Exception as e:
+            logging.warning("glog decode failed: %s", e)
+    return jsonify(ok=True)
 
 @app.get("/api/health")
 def health():

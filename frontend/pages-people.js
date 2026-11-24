@@ -16,12 +16,12 @@ P.people = async el => {
   const depts = [...new Set(people.map(p => p.department).filter(Boolean))].sort(), locs = [...new Set(people.map(p => p.location).filter(Boolean))].sort();
   const directory = () => {
     const needle = q.trim().toLowerCase();
-    const list = people.filter(p => (sub === 1 || stars.has(p.id)) && (!filt.dept || p.department === filt.dept) && (!filt.loc || p.location === filt.loc) && (!needle || p.name.toLowerCase().includes(needle) || String(p.emp_no).toLowerCase().includes(needle)));
+    const list = people.filter(p => (sub === 1 || stars.has(p.id)) && (!filt.dept || p.department === filt.dept) && (!filt.loc || p.location === filt.loc) && (!needle || p.name.toLowerCase().includes(needle) || String(p.emp_no).toLowerCase().includes(needle) || String(p.biometric_id || "") === needle));
     if (!list.some(p => p.id === sel)) sel = list.length ? list[0].id : null;
     const cur = people.find(p => p.id === sel);
     const row = p => `<button type="button" class="pd-row ${p.id === sel ? "on" : ""}" data-p="${p.id}"><span class="pd-av">${SILHOUETTE}</span><span><b>${esc(p.name)}</b> <small>(#${esc(p.emp_no)})</small></span></button>`;
     const kv = (k, v) => `<div class="pd-kv"><span>${k}</span><b>${v ? esc(v) : "-"}</b></div>`;
-    const detail = cur ? `<div class="pd-top"><div class="pd-big">${SILHOUETTE}</div><div><h2>${esc(cur.name)} <button type="button" class="pd-star ${stars.has(cur.id) ? "on" : ""}" data-star="${cur.id}" aria-label="${stars.has(cur.id) ? "Remove from starred" : "Add to starred"}">${stars.has(cur.id) ? "★" : "☆"}</button></h2><div class="mute">#${esc(cur.emp_no)}</div>
+    const detail = cur ? `<div class="pd-top"><div class="pd-big">${SILHOUETTE}</div><div><h2>${esc(cur.name)} <button type="button" class="pd-star ${stars.has(cur.id) ? "on" : ""}" data-star="${cur.id}" aria-label="${stars.has(cur.id) ? "Remove from starred" : "Add to starred"}">${stars.has(cur.id) ? "★" : "☆"}</button></h2><div class="mute">#${esc(cur.emp_no)}${cur.biometric_id ? ` · Machine ID ${esc(cur.biometric_id)}` : ""}</div>
         <div class="pd-sec"><span>CONTACT DETAILS</span></div>${kv("Email", cur.email)}
         <div class="pd-sec"><span>CATEGORY</span></div>${kv("Location", cur.location)}${kv("Department", cur.department)}${kv("Designation", cur.designation)}${kv("Reports to", cur.manager_name)}
         <div class="pd-sec"><span>OTHER INFORMATION</span></div>${kv("Joining Date", cur.join_date ? longDate(cur.join_date).replace(/ (\d{4})$/, ", $1") : "")}${kv("Date Of Birth", dobLabel(cur.dob))}</div></div>`
