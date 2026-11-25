@@ -17,8 +17,16 @@ Wire format (found by testing, matches a public write-up of a related reader):
                 bits 0-11 year-1521, 12-15 month, 16-20 day, 21-25 hour, 26-31 minute
 The machine does not say IN or OUT; the portal treats the first punch of a day as in and the last as out.
 """
-import json, os, socket, sys, time, urllib.error, urllib.request
+import hashlib, json, os, socket, sys, time, urllib.error, urllib.request
 from datetime import datetime
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+_env = os.path.join(HERE, "sync.env")      # KEY=VALUE lines: PORTAL_URL, BIOMETRIC_TOKEN, MACHINE_IP, PULL_FROM, PULL_EVERY (real environment variables win)
+if os.path.exists(_env):
+    for _line in open(_env, encoding="utf-8"):
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _v = _line.split("=", 1); os.environ.setdefault(_k.strip(), _v.strip())
 
 MACHINE_IP = os.environ.get("MACHINE_IP", "192.168.1.49")
 MACHINE_PORT = int(os.environ.get("MACHINE_PORT", "5005"))
@@ -27,17 +35,21 @@ PORTAL = os.environ.get("PORTAL_URL", "https://hr.3wheels.ai").rstrip("/")
 TOKEN = os.environ.get("BIOMETRIC_TOKEN", "")
 EVERY = int(os.environ.get("PULL_EVERY", "60"))
 PULL_FROM = os.environ.get("PULL_FROM", "")        # e.g. 2026-11-01: older punches are not sent to the portal
-HERE = os.path.dirname(os.path.abspath(__file__))
-SENT = os.path.join(HERE, "pulled_sent.txt")      # punches the portal already has
-COUNT = os.path.join(HERE, "pulled_count.txt")   # record count at the last complete pull
+_tag = hashlib.md5(PORTAL.encode()).hexdigest()[:8]              # state is kept per portal, so a local test never hides punches from the live site
+SENT = os.path.join(HERE, "pulled_sent_%s.txt" % _tag)      # punches that portal already has
+COUNT = os.path.join(HERE, "pulled_count_%s.txt" % _tag)    # record count at the last complete pull
 LOG = os.path.join(HERE, "pull_machine.log")
 
 
 def log(msg):
     line = "%s %s" % (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), msg)
-    print(line, flush=True)
-    with open(LOG, "a", encoding="utf-8") as f:
-        f.write(line + "\n")
+    try: print(line, flush=True)
+    except Exception: pass                                   # no console when the scheduler starts it
+    try:
+        if os.path.exists(LOG) and os.path.getsize(LOG) > 1_000_000: os.replace(LOG, LOG + ".old")   # the log cannot grow forever
+        with open(LOG, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError: pass
 
 
 def ask(payload_hex, want=None, wait=3.0):
@@ -119,7 +131,16 @@ def pull_once():
     return sent
 
 
+def only_one_copy():
+    """The scheduler starts the script again every few minutes; a second copy finds this port taken and quits."""
+    s = socket.socket()
+    try: s.bind(("127.0.0.1", 47123 + int(_tag, 16) % 500)); return s
+    except OSError: return None
+
+
 if __name__ == "__main__":
+    _lock = only_one_copy()
+    if _lock is None: sys.exit(0)                           # another copy is already running
     if len(TOKEN) < 16:
         sys.exit("Set BIOMETRIC_TOKEN (same value as on the portal, at least 16 characters).")
     once = "--once" in sys.argv

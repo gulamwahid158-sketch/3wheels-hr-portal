@@ -13,3 +13,4 @@ connector/*.log
 connector/pulled_*.txt
 connector/connector_queue.jsonl
 connector/connector_seen.txt
+connector/sync.env

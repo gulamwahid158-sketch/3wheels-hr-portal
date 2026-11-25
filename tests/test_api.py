@@ -80,6 +80,23 @@ def test_no_punch_half_day_and_regularize_from_exception():
     A.run("UPDATE employees SET biometric_id=NULL WHERE id=?", (nia,))   # ... and the linked employees
 
 
+def test_pending_count_matches_list_and_me_cache_follows_changes():
+    k = login("komal@example.com"); m = login("manager@example.com")
+    k.post("/api/leave/apply", json={"code": "CL", "from_date": "2026-12-14", "to_date": "2026-12-14", "reason": "x"})
+    mgr = A.q("SELECT * FROM employees WHERE email='manager@example.com'", one=True)
+    assert A.pending_review_count(mgr) == len(A.pending_reviews(mgr)) >= 1
+    assert m.get("/api/me").get_json()["pending_reviews"] == A.pending_review_count(mgr)
+    # the remembered user row must not hide a change: role edits and deactivation show up at once
+    ceo = login("ceo@example.com")
+    assert m.get("/api/me").get_json()["role"] == "manager"
+    assert ceo.patch("/api/admin/employees/%d" % mgr["id"], json={"role": "employee"}).status_code == 200
+    assert m.get("/api/me").get_json()["role"] == "employee"
+    assert ceo.patch("/api/admin/employees/%d" % mgr["id"], json={"role": "manager"}).status_code == 200
+    assert ceo.patch("/api/admin/employees/%d" % mgr["id"], json={"active": False}).status_code == 200
+    assert m.get("/api/me").status_code == 401
+    assert ceo.patch("/api/admin/employees/%d" % mgr["id"], json={"active": True}).status_code == 200
+
+
 def test_misc_endpoints():
     k = login("komal@example.com")
     for p in ["home", "holidays", "payslips", "ytd", "it-statement", "people", "orgchart", "feed", "kudos", "feedback", "tasks", "review", "request-hub", "documents", "salary-revisions", "leave/calendar", "notifications", "loans", "tickets"]:

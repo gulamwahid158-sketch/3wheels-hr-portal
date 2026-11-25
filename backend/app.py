@@ -1,4 +1,4 @@
-import os, re, functools, smtplib, calendar
+import os, re, time, functools, smtplib, calendar
 from io import BytesIO
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -92,11 +92,23 @@ def run(sql, args=()):
     c = db.conn()
     cur = c.execute(sql, args)
     c.commit(); lid = cur.lastrowid; c.close()
+    if "employees" in sql[:60].lower(): _ME_CACHE.clear()          # someone's row changed: forget the remembered users
     return lid
 
 
+_ME_CACHE = {}        # uid -> (time, row): the signed-in user's row is read on every request, and each database trip costs ~60 ms
+ME_TTL = 3.0
+
+
 def me():
-    return q("SELECT * FROM employees WHERE id=? AND active=1", (session.get("uid"),), one=True) if session.get("uid") else None
+    uid = session.get("uid")
+    if not uid: return None
+    hit = _ME_CACHE.get(uid)
+    if hit and time.monotonic() - hit[0] < ME_TTL: return dict(hit[1])
+    row = q("SELECT * FROM employees WHERE id=? AND active=1", (uid,), one=True)
+    if row: _ME_CACHE[uid] = (time.monotonic(), row)
+    else: _ME_CACHE.pop(uid, None)
+    return dict(row) if row else None
 
 
 def auth(roles=None):
@@ -123,6 +135,12 @@ def db_unavailable(e):
     # e.g. hosted MySQL connection limit reached, or the database is unreachable
     print("[DB error]", e)
     return jsonify(error="The database is busy or unreachable. Please try again in a few minutes."), 503
+
+
+@app.after_request
+def cache_static(resp):
+    if request.path.endswith((".js", ".css")) and resp.status_code == 200: resp.headers["Cache-Control"] = "public, max-age=300"
+    return resp
 
 
 @app.errorhandler(ValueError)
@@ -161,12 +179,20 @@ def count_days(f, t, fs=1, ts=2):
     return max(n, 0)
 
 
+_LT = [0.0, []]
+
+
+def leave_types_cached():
+    if time.monotonic() - _LT[0] > 60: _LT[1] = q("SELECT * FROM leave_types"); _LT[0] = time.monotonic()
+    return _LT[1]
+
+
 def balances(emp_id):
     out = []
     grants = {}
     for g_ in q("SELECT * FROM leave_grants WHERE emp_id=? ORDER BY id", (emp_id,)): grants.setdefault(g_["code"], g_)      # 3 queries in total, not 2 per leave type (the database is remote)
     spent = {r["code"]: r["s"] for r in q("SELECT code, COALESCE(SUM(days),0) s FROM requests WHERE emp_id=? AND kind IN('leave','rh') AND status IN('approved','pending') GROUP BY code", (emp_id,))}
-    for t in q("SELECT * FROM leave_types"):
+    for t in leave_types_cached():
         g = grants.get(t["code"]) or {"granted": 0, "opening_used": 0}
         used = spent.get(t["code"], 0)
         consumed = g["opening_used"] + used
@@ -196,7 +222,7 @@ def whoami(u):
     mgr = q("SELECT name FROM employees WHERE id=?", (u["manager_id"],), one=True)
     u["manager_name"] = mgr["name"] if mgr else None
     u["unread"] = q("SELECT COUNT(*) c FROM notifications WHERE emp_id=? AND is_read=0", (u["id"],), one=True)["c"]
-    u["pending_reviews"] = len(pending_reviews(u))
+    u["pending_reviews"] = pending_review_count(u)
     return jsonify(u)
 
 
@@ -233,7 +259,7 @@ def home(u):
     return jsonify(
         holidays=q("SELECT * FROM holidays WHERE date>=? ORDER BY date LIMIT 3", (today,)),
         balances=balances(u["id"]),
-        pending_reviews=len(pending_reviews(u)),
+        pending_reviews=pending_review_count(u),
         payslip=q("SELECT * FROM payslips WHERE emp_id=? ORDER BY month DESC LIMIT 1", (u["id"],), one=True),
         tasks=q("SELECT * FROM tasks WHERE emp_id=? AND done=0 ORDER BY due_date LIMIT 5", (u["id"],)),
         birthdays=q("SELECT name,dob FROM employees WHERE substr(dob,6,5)=? AND active=1", (date.today().strftime("%m-%d"),)),
@@ -779,6 +805,15 @@ def approver_ids(u):
     t = date.today().isoformat()
     ids = [u["id"]] + [r["from_id"] for r in q("SELECT from_id FROM delegates WHERE to_id=? AND from_date<=? AND to_date>=?", (u["id"], t, t))]
     return ids
+
+
+def pending_review_count(u):
+    """How many requests wait for this person (same rule as pending_reviews, but one query)."""
+    t = date.today().isoformat()
+    who = "SELECT ? UNION SELECT from_id FROM delegates WHERE to_id=? AND from_date<=? AND to_date>=?"
+    one = "(SELECT COUNT(*) FROM %s WHERE status='pending' AND approver_id IN (" + who + "))"
+    sql = "SELECT " + " + ".join(one % tb for tb in ("requests", "regularizations", "reimbursements", "loans")) + " n"
+    return q(sql, [u["id"], u["id"], t, t] * 4, one=True)["n"]
 
 
 def pending_reviews(u):
