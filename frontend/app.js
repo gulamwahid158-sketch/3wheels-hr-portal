@@ -620,10 +620,10 @@ P.executive = async el => {
         <h2>Department Workforce & Leadership</h2>
         ${table([["Department", r => r.department], ["Total", r => r.total], ["Active", r => r.active], ["HR Team", r => r.hr_count], ["Managers", r => r.manager_count]], s.dept_stats)}
       </div>
-      <div class="card">
+      ${["ceo", "coo", "cpo"].includes(ME.role) ? "" : `<div class="card">
         <h2>Resignations Watchlist</h2>
         ${table([["Employee", r => r.emp_name], ["Department", r => r.department], ["Designation", r => r.designation], ["Last Working Day", r => fdate(r.last_day)], ["Reason", r => r.reason], ["Status", r => badge(r.status), 1]], s.resignations, "No resignations submitted.")}
-      </div>`;
+      </div>`}`;
     }
 
     if (tab === 1) {
