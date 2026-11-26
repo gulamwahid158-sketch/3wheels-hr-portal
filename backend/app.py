@@ -2258,6 +2258,20 @@ def a_requests(u):
 
 
 # ---------- executive suite (CEO / COO / CPO) ----------
+@app.get("/api/executive/daily")
+@auth(EXEC_ROLES)
+def exec_daily(u):
+    """Company attendance for every day of a month up to today: how many were present, half day, absent or on leave."""
+    month = month_arg()
+    settle_days(None, month)
+    rows = q("SELECT a.date, a.status, COUNT(*) c FROM attendance a JOIN employees e ON e.id=a.emp_id "
+             "WHERE e.active=1 AND e.role NOT IN ('ceo','coo','cpo') AND substr(a.date,1,7)=? AND a.date<=? GROUP BY a.date, a.status", (month, date.today().isoformat()))
+    days = {}
+    for r in rows:
+        key = {"P": "present", "HD": "half_day", "L": "absent", "A": "absent", "CL": "leave", "CO": "leave", "LOP": "leave"}.get(r["status"])
+        if key: days.setdefault(r["date"], dict(date=r["date"], present=0, half_day=0, absent=0, leave=0))[key] += r["c"]
+    return jsonify([days[k] for k in sorted(days)])
+
 @app.get("/api/executive/summary")
 @auth(EXEC_ROLES)
 def exec_summary(u):

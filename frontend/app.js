@@ -612,7 +612,7 @@ P.executive = async el => {
       <div class="grid">
         <div class="card"><span class="mute">Company Headcount</span><div class="stat">${s.dept_stats.reduce((a, b) => a + b.active, 0)} <small class="mute" style="font-size:14px">/ ${s.dept_stats.reduce((a, b) => a + b.total, 0)} total</small></div></div>
         <div class="card"><span class="mute">Monthly Net Payroll</span><div class="stat">${inr(s.payroll.total_net)}</div><small class="mute">${esc(s.payroll.month || "-")}</small></div>
-        <div class="card"><span class="mute">Attendance Today</span><div class="stat">${s.attendance_today.P || 0} Present</div><small class="mute">${s.attendance_today.A || 0} Absent · ${s.attendance_today.CL || 0} Leave</small></div>
+        ${["ceo", "coo", "cpo"].includes(ME.role) ? "" : `<div class="card"><span class="mute">Attendance Today</span><div class="stat">${s.attendance_today.P || 0} Present</div><small class="mute">${s.attendance_today.A || 0} Absent · ${s.attendance_today.CL || 0} Leave</small></div>`}
         <div class="card"><span class="mute">Company-Wide Pending</span><div class="stat">${totReqs}</div><small class="mute">Leaves, regs, claims & loans</small></div>
         <div class="card"><span class="mute">Pending Resignations</span><div class="stat">${s.resignations.filter(r => r.status === 'pending').length}</div><small class="mute">Attrition alert</small></div>
       </div>
@@ -720,10 +720,10 @@ P.executive = async el => {
       </div>`;
     }
 
-    const overview = ["ceo", "coo", "cpo"].includes(ME.role) && tab <= 2;
+    const overview = ["ceo", "coo", "cpo"].includes(ME.role) && (tab <= 2 || tab === 4);
     el.innerHTML = `<h1>${esc(ME.role.toUpperCase())} Leadership Suite</h1>${tabs(NAMES, tab)}${inner}${overview ? '<div id="xo"><p class="mute">Loading today\'s overview…</p></div>' : ""}`;
     wireTabs(i => { tab = i; draw(); });
-    if (overview) fillExecOverview(el.querySelector("#xo"), s);      // loads after the page is already on screen (el may have been replaced meanwhile)
+    if (overview) (tab === 4 ? fillExecDecisions(el.querySelector("#xo")) : fillExecOverview(el.querySelector("#xo"), s, tab));      // loads after the page is already on screen (el may have been replaced meanwhile)
 
     el.querySelectorAll("[data-hract]").forEach(b => b.onclick = async () => {
       try {
@@ -753,10 +753,10 @@ P.executive = async el => {
 };
 
 // CEO / COO / CPO: today's attendance, the month by department, birthdays, new joiners and holidays (all from live records)
-async function fillExecOverview(box, summary) {
+async function fillExecOverview(box, summary, tab) {
   const today = todayIso(), ym = today.slice(0, 7);
-  let emps, day, month, hols;
-  try { [emps, day, month, hols] = await Promise.all([api("admin/employees"), api("admin/attendance?date=" + today), api("admin/attendance-overview?month=" + ym), api("holidays")]); }
+  let emps, day, month, hols, daily;
+  try { [emps, day, month, hols, daily] = await Promise.all([api("admin/employees"), api("admin/attendance?date=" + today), api("admin/attendance-overview?month=" + ym), api("holidays"), api("executive/daily?month=" + ym)]); }
   catch (e) { if (box.isConnected) box.innerHTML = `<div class="card err">${esc(e.message)}</div>`; return; }
   if (!box.isConnected) return;                       // another tab was opened meanwhile
 
@@ -789,6 +789,55 @@ async function fillExecOverview(box, summary) {
   const joiners = emps.filter(e => e.active && e.join_date && e.join_date <= today && (t0 - new Date(e.join_date + "T00:00")) / dayMs <= 30).sort((a, b) => b.join_date.localeCompare(a.join_date));
   const coming = hols.filter(h => h.date >= today && !/^Sunday/.test(h.name)).slice(0, 5);
   const scroll = html => `<div style="max-height:320px;overflow:auto">${html}</div>`;
+  const two = 'class="grid" style="grid-template-columns:repeat(auto-fit,minmax(380px,1fr))"';
+  const color = v => v >= 75 ? "#388e3c" : v >= 50 ? "#b8860b" : "#c62828";
+
+  // one row per person this month: present days count fully, half days half
+  const people = month.filter(r => !founders.includes(r.role)).map(r => { const n = r.present + r.half_day + r.absent + r.leave_no_punch; return { ...r, miss: r.absent + r.leave_no_punch, rate: n ? pct(r.present + r.half_day / 2, n) : null }; }).filter(r => r.rate != null);
+  const ranked = people.slice().sort((a, b) => b.rate - a.rate || b.working_hours - a.working_hours);
+  const rankCols = [["Name", r => r.name], ["Department", r => r.department || "-"], ["Absent", r => r.miss], ["Attendance", r => bar(r.rate, color(r.rate)), 1]];
+
+  const working = daily.filter(x => !hols.some(h => !h.restricted && h.date === x.date));
+  const chart = () => {
+    if (!working.length) return '<p class="mute">No working day recorded this month.</p>';
+    const H = 150, part = (n, of, c) => n ? `<i style="display:block;height:${n / of * H}px;background:${c}"></i>` : "";
+    const max = Math.max(...working.map(x => x.present + x.half_day + x.absent + x.leave), 1);
+    return `<div style="display:flex;align-items:flex-end;gap:4px;overflow-x:auto;padding-bottom:4px">${working.map(x => `<div style="flex:1;min-width:18px;text-align:center" title="${longDate(x.date)}: ${x.present} present, ${x.half_day} half day, ${x.absent} absent, ${x.leave} leave">
+      <div style="height:${H}px;display:flex;flex-direction:column;justify-content:flex-end;border-radius:4px;overflow:hidden">${part(x.leave, max, "#1565c0")}${part(x.absent, max, "#e57373")}${part(x.half_day, max, "#e0b040")}${part(x.present, max, "#4caf50")}</div><small class="mute">${dayNum(x.date)}</small></div>`).join("")}</div>
+      <p class="mute" style="font-size:12px;margin-top:8px"><b style="color:#4caf50">■</b> Present &nbsp; <b style="color:#e0b040">■</b> Half day &nbsp; <b style="color:#e57373">■</b> Absent &nbsp; <b style="color:#1565c0">■</b> Leave</p>`;
+  };
+
+  let extra = "";
+  if (tab === 0) {          // CEO view: the company over the month and every manager's team
+    const teams = staff.concat(emps.filter(e => founders.includes(e.role))).map(boss => {
+      const team = staff.filter(e => e.manager_id === boss.id);
+      const rows = people.filter(r => team.some(e => e.id === r.emp_id));
+      return { name: boss.name, role: boss.designation || boss.role, size: team.length, in: team.filter(isIn).length, rate: rows.length ? Math.round(rows.reduce((a, r) => a + r.rate, 0) / rows.length) : null };
+    }).filter(t => t.size).sort((a, b) => b.size - a.size);
+    extra = `<div class="card"><h2>Company day by day - ${monthTitle(ym)}</h2>${chart()}</div>
+      <div class="card"><h2>Teams by reporting manager</h2>${table([["Manager", t => t.name], ["Designation", t => t.role], ["Team", t => t.size], ["In today", t => `${t.in} / ${t.size}`], ["Month attendance", t => t.rate == null ? "-" : bar(t.rate, color(t.rate)), 1]], teams, "No teams yet.")}</div>
+      <div ${two}><div class="card"><h2>Best attendance this month</h2>${table(rankCols, ranked.slice(0, 8), "No attendance yet.")}</div>
+      <div class="card"><h2>Needs attention (below 75%)</h2>${scroll(table(rankCols, ranked.filter(r => r.rate < 75).reverse(), "Everyone is at 75% or more."))}</div></div>`;
+  } else if (tab === 1) {   // COO view: when people arrive and how many hours are worked
+    const slots = [["Before 10:00", t => t < "10:00"], ["10:00 - 11:00", t => t >= "10:00" && t < "11:00"], ["11:00 - 12:00", t => t >= "11:00" && t < "12:00"], ["12:00 - 14:00", t => t >= "12:00" && t < "14:00"], ["After 14:00", t => t >= "14:00"]]
+      .map(([label, f]) => ({ label, n: inList.filter(e => f(rec[e.id].first_in)).length }));
+    const arrivals = inList.slice().sort((a, b) => rec[a.id].first_in.localeCompare(rec[b.id].first_in));
+    const busiest = people.slice().sort((a, b) => b.working_hours - a.working_hours).slice(0, 8);
+    extra = `<div ${two}><div class="card"><h2>Arrival time today</h2>${table([["Time", x => x.label], ["People", x => x.n], ["Share", x => bar(pct(x.n, inList.length), "#1565c0"), 1]], slots)}</div>
+      <div class="card"><h2>Today's punches (${arrivals.length})</h2>${scroll(table([["Name", e => e.name], ["Department", e => e.department], ["First in", e => rec[e.id].first_in], ["Last punch", e => rec[e.id].last_out && rec[e.id].last_out !== rec[e.id].first_in ? rec[e.id].last_out : "-"]], arrivals, "No punch yet today."))}</div></div>
+      <div class="card"><h2>Working day by day - ${monthTitle(ym)}</h2>${chart()}</div>
+      <div class="card"><h2>Most hours worked this month</h2>${table([["Name", r => r.name], ["Department", r => r.department || "-"], ["Present days", r => r.present], ["Hours", r => Math.round(r.working_hours)]], busiest, "No hours recorded yet.")}</div>`;
+  } else {                  // CPO view: the workforce and gaps in employee records
+    const count = key => Object.entries(staff.reduce((a, e) => { const k = e[key] || "Not filled"; a[k] = (a[k] || 0) + 1; return a; }, {})).map(([name, n]) => ({ name, n })).sort((a, b) => b.n - a.n);
+    const months = Array.from({ length: 6 }, (_, i) => addMonths(ym, i - 5)).map(m => ({ m, n: emps.filter(e => e.active && String(e.join_date || "").slice(0, 7) === m).length }));
+    const top = Math.max(...months.map(x => x.n), 1);
+    const gaps = [["Date of birth", "dob"], ["Mobile number", "phone"], ["Joining date", "join_date"], ["Designation", "designation"], ["Biometric machine ID", "biometric_id"], ["Emergency contact", "emergency_contact_phone"], ["PAN number", "pan_no"], ["Bank account", "bank_account_no"]]
+      .map(([label, k]) => ({ label, n: staff.filter(e => !e[k]).length }));
+    extra = `<div ${two}><div class="card"><h2>Joining by month</h2>${table([["Month", x => monthTitle(x.m)], ["Joined", x => x.n], ["", x => `<div style="height:8px;border-radius:6px;background:#1565c0;width:${x.n / top * 100}%;min-width:${x.n ? 8 : 0}px"></div>`, 1]], months)}</div>
+      <div class="card"><h2>Missing in employee records</h2>${table([["Detail", x => x.label], ["People missing", x => x.n], ["Filled", x => bar(pct(staff.length - x.n, staff.length), color(pct(staff.length - x.n, staff.length))), 1]], gaps)}</div></div>
+      <div ${two}><div class="card"><h2>People by designation</h2>${scroll(table([["Designation", x => x.name], ["People", x => x.n]], count("designation")))}</div>
+      <div class="card"><h2>People by role</h2>${table([["Role", x => titleCase(x.name)], ["People", x => x.n]], count("role"))}</div></div>`;
+  }
 
   box.innerHTML = `
     <h2 style="margin:18px 0 8px">Today at a glance - ${longDate(today)}</h2>
@@ -798,6 +847,7 @@ async function fillExecOverview(box, summary) {
       ${tile("On approved leave", leave.length, "CL / Comp Off / LOP", "#1565c0")}
       ${tile("Waiting for approval", pending, "Leave, regularization, claims, loans", "#b8860b")}
     </div>
+    ${extra}
     <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(380px,1fr))">
       <div class="card"><h2>Department-wise today</h2>${table([["Department", d => d.name], ["In / Total", d => `${d.in} / ${d.total}`], ["Present", d => bar(pct(d.in, d.total), "#388e3c"), 1]], Object.values(byDept).sort((a, b) => b.total - a.total), "No employees.")}</div>
       <div class="card"><h2>Not punched yet (${out.length})</h2>${scroll(table([["Employee", e => e.name], ["Department", e => e.department], ["Reports to", e => e.manager_name || "-"]], out.slice().sort((a, b) => a.name.localeCompare(b.name)), "Everyone has punched in."))}</div>
@@ -808,6 +858,19 @@ async function fillExecOverview(box, summary) {
       <div class="card"><h2>New joiners (30 days)</h2>${scroll(table([["Name", e => e.name], ["Designation", e => e.designation || "-"], ["Joined", e => fdate(e.join_date)]], joiners, "No one joined in the last 30 days."))}</div>
       <div class="card"><h2>Upcoming holidays</h2>${table([["Date", h => fdate(h.date)], ["Holiday", h => h.name], ["Type", h => h.restricted ? "Optional" : "Public"]], coming, "No holidays listed.")}</div>
     </div>`;
+}
+
+// Master Approvals tab: what has been decided lately (the waiting list is above it)
+async function fillExecDecisions(box) {
+  let r;
+  try { r = await api("admin/requests"); } catch (e) { if (box.isConnected) box.innerHTML = `<div class="card err">${esc(e.message)}</div>`; return; }
+  if (!box.isConnected) return;
+  const all = [...(r.history || []).map(x => ({ ...x, kindText: `${x.code} ${titleCase(x.kind)}`, dates: `${fdate(x.from_date)} to ${fdate(x.to_date)}` })),
+    ...(r.reg_history || []).map(x => ({ ...x, kindText: titleCase(x.kind), dates: fdate(x.date) }))].sort((a, b) => String(b.decided_at).localeCompare(String(a.decided_at)));
+  const n = st => all.filter(x => x.status === st).length;
+  box.innerHTML = `<div class="grid"><div class="card" style="border-top:3px solid #388e3c"><span class="mute">Recently approved</span><div class="stat">${n("approved")}</div></div>
+    <div class="card" style="border-top:3px solid #c62828"><span class="mute">Recently rejected</span><div class="stat">${n("rejected")}</div></div></div>
+    <div class="card"><h2>Recent decisions</h2><div style="max-height:420px;overflow:auto">${table([["Employee", x => x.emp_name], ["Request", x => x.kindText], ["For", x => x.dates], ["Decision", x => badge(x.status), 1], ["By", x => x.decider_name || "-"], ["On", x => fdate(x.decided_at)]], all, "No decisions yet.")}</div></div>`;
 }
 
 P.admin = async el => {
