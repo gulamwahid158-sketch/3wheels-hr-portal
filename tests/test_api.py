@@ -524,6 +524,22 @@ def test_resignation_is_switched_off():
     assert r.status_code == 403 and "turned off" in r.get_json()["error"]
 
 
+def test_my_team_only_shows_people_below_the_manager():
+    m = login("manager@example.com"); k = login("komal@example.com")
+    me = m.get("/api/me").get_json()
+    direct = m.get("/api/team").get_json()["members"]
+    assert me["team_size"] == len(direct) > 0 and all(x["manager_id"] == me["id"] for x in direct)
+    assert not {"aadhaar_no", "pan_no", "bank_account_no", "password_hash", "phone", "dob"} & set(direct[0])
+    deep = m.get("/api/team?scope=all&month=2026-11").get_json()
+    assert {x["id"] for x in direct} <= {x["id"] for x in deep["members"]} and me["id"] not in {x["id"] for x in deep["members"]}
+    kid = k.get("/api/me").get_json()["id"]
+    assert m.get("/api/team/%d/attendance?month=2026-11" % kid).status_code == 200
+    assert k.get("/api/team").get_json()["members"] == [] and k.get("/api/me").get_json()["team_size"] == 0
+    assert k.get("/api/team/%d/attendance" % me["id"]).status_code == 403          # nobody outside one's own team
+    assert m.get("/api/team/%d/attendance" % me["id"]).status_code == 403
+    assert A.app.test_client().get("/api/team").status_code == 401
+
+
 def test_designation_master_list():
     c = login("komal@example.com")
     d = c.get("/api/designations").get_json()

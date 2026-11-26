@@ -311,9 +311,11 @@ def change_my_password(u):
 @auth()
 def whoami(u):
     u.pop("password_hash")
-    mgr, unread, pending = par(lambda: q("SELECT name FROM employees WHERE id=?", (u["manager_id"],), one=True),
+    mgr, unread, pending, team = par(lambda: q("SELECT name FROM employees WHERE id=?", (u["manager_id"],), one=True),
                                lambda: q("SELECT COUNT(*) c FROM notifications WHERE emp_id=? AND is_read=0", (u["id"],), one=True),
-                               lambda: pending_review_count(u))
+                               lambda: pending_review_count(u),
+                               lambda: q("SELECT COUNT(*) c FROM employees WHERE manager_id=? AND active=1", (u["id"],), one=True))
+    u["team_size"] = team["c"]               # people reporting directly: the page shows "My Team" when there are any
     u["manager_name"] = mgr["name"] if mgr else None
     u["unread"] = unread["c"]
     u["pending_reviews"] = pending
@@ -518,6 +520,73 @@ def regularize(u):
 @app.get("/api/regularization")
 @auth()
 def regs(u): return jsonify(q("SELECT r.*, a.name approver_name FROM regularizations r LEFT JOIN employees a ON a.id=r.approver_id WHERE r.emp_id=? ORDER BY r.id DESC", (u["id"],)))
+
+
+# ---------- my team (a reporting manager sees the people under them, nobody else) ----------
+TEAM_FIELDS = "id, emp_no, name, designation, department, manager_id, join_date"      # work details only: nothing personal
+
+
+def team_of(u, deep=False):
+    """The caller's direct reports, or with deep=True everyone below them in the reporting line."""
+    everyone = q("SELECT %s FROM employees WHERE active=1" % TEAM_FIELDS)
+    below = {}
+    for e in everyone:
+        if e["manager_id"]: below.setdefault(e["manager_id"], []).append(e)
+    out, seen, queue = [], {u["id"]}, [u["id"]]
+    while queue:
+        for e in below.get(queue.pop(0), []):
+            if e["id"] in seen: continue                     # a loop in the reporting data cannot go round forever
+            seen.add(e["id"]); out.append(e)
+            if deep: queue.append(e["id"])
+    names = {e["id"]: e["name"] for e in everyone}
+    for e in out: e["manager_name"] = names.get(e["manager_id"])
+    return sorted(out, key=lambda e: e["name"].lower())
+
+
+def month_arg():
+    m = request.args.get("month", date.today().strftime("%Y-%m"))
+    try: datetime.strptime(m, "%Y-%m")
+    except ValueError: raise ValueError("Invalid month, expected YYYY-MM")
+    return m
+
+
+@app.get("/api/team")
+@auth()
+def my_team(u):
+    month = month_arg()
+    members = team_of(u, request.args.get("scope") == "all")
+    if not members: return jsonify(members=[], pending=[], today=date.today().isoformat(), month=month)
+    ids = [e["id"] for e in members]; ph = ",".join("?" * len(ids))
+    settle_days(ids, month)
+    today = date.today().isoformat()
+    rows, today_rows, reqs, regs = par(
+        lambda: q("SELECT emp_id, status, first_in, last_out FROM attendance WHERE substr(date,1,7)=? AND emp_id IN (%s)" % ph, [month] + ids),
+        lambda: q("SELECT emp_id, status, first_in, last_out FROM attendance WHERE date=? AND emp_id IN (%s)" % ph, [today] + ids),
+        lambda: q("SELECT emp_id, kind, code, from_date, to_date, days, reason FROM requests WHERE status='pending' AND emp_id IN (%s) ORDER BY id DESC" % ph, ids),
+        lambda: q("SELECT emp_id, kind, date, in_time, out_time, reason FROM regularizations WHERE status='pending' AND emp_id IN (%s) ORDER BY id DESC" % ph, ids))
+    by = {e["id"]: e for e in members}
+    for e in members: e.update(present=0, half_day=0, absent=0, leave=0, minutes=0, today=None)
+    for r in rows:
+        e = by[r["emp_id"]]
+        key = {"P": "present", "HD": "half_day", "L": "absent", "A": "absent", "CL": "leave", "CO": "leave", "LOP": "leave"}.get(r["status"])
+        if key: e[key] += 1
+        if r["first_in"] and r["last_out"] and r["last_out"] != r["first_in"]:
+            try: e["minutes"] += biometric.work_minutes(r["first_in"], r["last_out"])
+            except ValueError: pass
+    for r in today_rows: by[r["emp_id"]]["today"] = {"status": r["status"], "first_in": r["first_in"], "last_out": r["last_out"]}
+    pending = [dict(r, name=by[r["emp_id"]]["name"], type="Leave" if r["kind"] == "leave" else r["kind"].replace("_", " ").title(),
+                    detail="%s %s to %s (%s day)" % (r["code"], r["from_date"], r["to_date"], r["days"])) for r in reqs]
+    pending += [dict(r, name=by[r["emp_id"]]["name"], type=r["kind"].title(), detail="%s %s - %s" % (r["date"], r["in_time"] or "", r["out_time"] or "")) for r in regs]
+    return jsonify(members=members, pending=pending, today=today, month=month)
+
+
+@app.get("/api/team/<int:eid>/attendance")
+@auth()
+def my_team_attendance(u, eid):
+    month = month_arg()
+    if eid not in {e["id"] for e in team_of(u, deep=True)}: return jsonify(error="This person is not in your team"), 403
+    settle_days([eid], month)
+    return jsonify(q("SELECT emp_id, date, status, first_in, last_out FROM attendance WHERE emp_id=? AND substr(date,1,7)=? ORDER BY date", (eid, month)))
 
 
 # ---------- salary ----------

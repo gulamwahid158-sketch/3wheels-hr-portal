@@ -534,7 +534,7 @@ const ICONS = {
 const icon = (k, cls = "ico") => ICONS[k] ? `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>` : esc(k || "");
 
 // Page titles for the header; the colour of the little tab shape follows the sidebar section.
-const TITLES = { home: "Home", engage: "Engage", kudos: "Kudos", feedback: "Feedback", tasks: "Tasks", review: "Review", payslips: "Payslips", ytd: "YTD Reports", "it-statement": "IT Statement", "it-declaration": "IT Declaration", loans: "Loans and Advances", reimbursement: "Reimbursement", poi: "Proof Of Investment", "salary-revision": "Salary Revision", "leave-apply": "Leave Apply", "leave-balances": "Leave Balances", "leave-calendar": "Leave Calendar", holidays: "Holiday Calendar", attendance: "Attendance Info", regularization: "Regularization & Permission", documents: "Document Center", people: "People", helpdesk: "Helpdesk", "request-hub": "Request Hub", delegates: "Workflow Delegates", "my-info": "My Info", executive: "Leadership Suite", admin: "HR Admin", accounts: "Accounts Admin" };
+const TITLES = { home: "Home", engage: "Engage", kudos: "Kudos", feedback: "Feedback", tasks: "Tasks", review: "Review", payslips: "Payslips", ytd: "YTD Reports", "it-statement": "IT Statement", "it-declaration": "IT Declaration", loans: "Loans and Advances", reimbursement: "Reimbursement", poi: "Proof Of Investment", "salary-revision": "Salary Revision", "leave-apply": "Leave Apply", "leave-balances": "Leave Balances", "leave-calendar": "Leave Calendar", holidays: "Holiday Calendar", attendance: "Attendance Info", regularization: "Regularization & Permission", documents: "Document Center", people: "People", helpdesk: "Helpdesk", "request-hub": "Request Hub", delegates: "Workflow Delegates", "my-info": "My Info", "my-team": "My Team", executive: "Leadership Suite", admin: "HR Admin", accounts: "Accounts Admin" };
 const ROUTE_ALIAS = { "my-regularizations": "attendance" };
 TITLES["my-regularizations"] = "My Regularizations";
 const CRUMB_COLOR = { home: "#c4b5fd", engage: "#fdba9b", kudos: "#5ed3d1", feedback: "#5ed3d1", tasks: "#86d9a0", review: "#86d9a0", "leave-apply": "#5fd1d8", "leave-balances": "#5fd1d8", "leave-calendar": "#5fd1d8", holidays: "#5fd1d8", attendance: "#c4b5fd", regularization: "#c4b5fd", documents: "#f0a8d8", people: "#c4b5fd" };
@@ -1541,13 +1541,13 @@ P.admin = async el => {
   draw();
 };
 
-// HR Admin > Employees: one person's attendance for any month (calendar, totals and a day by day table)
-async function showEmpAttendance(emp) {
+// One person's attendance for any month (calendar, totals and a day by day table): HR Admin > Employees and My Team
+async function showEmpAttendance(emp, source = ym => "admin/attendance-overview?month=" + ym + "&emp_id=" + emp.id) {
   let ym = localYm();
   const body = openDialog(`Attendance - ${emp.name} (${emp.emp_no})`, `<p class="mute">Loading…</p>`, { wide: true });
   const draw = async () => {
     let rows;
-    try { rows = await api("admin/attendance-overview?month=" + ym + "&emp_id=" + emp.id); }
+    try { rows = await api(source(ym)); }
     catch (e) { body.innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
     const by = Object.fromEntries(rows.map(r => [r.date, r]));
     const n = (...st) => rows.filter(r => st.includes(r.status)).length;
@@ -1606,6 +1606,10 @@ function sidebar(route) {
     navList = [["admin", "HR Admin", "admin"], ...navList];
   } else if (ME.role === "accounts" || ME.role === "superadmin") {
     navList = [...navList, ["accounts", "Accounts Admin", "accounts"]];
+  }
+  if (ME.team_size) {                 // someone reports to this person: My Team sits right after Home
+    const at = navList.findIndex(n => n[0] === "home");
+    navList.splice(at + 1, 0, ["my-team", "My Team", "people"]);
   }
   return `<div class="logo"><img src="assets/logo.png" alt="" aria-hidden="true"><span>3Wheels AI</span></div>
   <div class="prof"><span class="avatar">${esc(ME.name[0])}</span><div><b>Hi ${esc(ME.name.split(" ")[0])}</b> <span class="badge ${esc(ME.role)}">${esc(ME.role.toUpperCase())}</span><br><a href="#/my-info">View My Info</a></div><a href="#/my-info" class="gear" aria-label="Settings">${icon("admin")}</a></div>
