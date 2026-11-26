@@ -1772,12 +1772,11 @@ def rebuild_attendance(emp_id=None):
     have = {(r["emp_id"], r["date"]): r for r in q(
         "SELECT emp_id, date, status, first_in, source FROM attendance WHERE emp_id IN (%s)" % ",".join("?" * len(emps)), [e["id"] for e in emps])}
     ins, upd = [], []
-    today_iso = date.today().isoformat()
     for enno, ts in times.items():
         eid = owner[enno]
         for day, (fi, lo) in biometric.derive_days(ts).items():
             cur = have.get((eid, day))
-            judged = biometric.classify(fi, lo) if day < today_iso else "P"      # today is still in progress
+            judged = biometric.classify(fi, lo)      # today too: under 4.5 hours so far reads Leave, 4.5 to 9 Half Day, 9 or more Present
             if cur is None: ins.append((eid, day, judged, fi, lo, "bio"))
             elif cur["source"] in ("bio", "auto"):                                  # machine / system rows follow the machine
                 upd.append((judged if cur["status"] in ("P", "HD", "L") else cur["status"], fi, lo, "bio", eid, day))
@@ -1799,15 +1798,16 @@ COMPANY_START = "2026-05-18"      # people with no joining date are counted from
 
 
 def settle_days(emp_ids=None, month=None):
-    """Make the attendance table complete for the finished days of a month (before today):
-      * a day without any punch becomes Leave ('L') (only from the day the machine was first used), or the approved leave that covers it;
+    """Make the attendance table complete for the days of a month up to today:
+      * a finished day without any punch becomes Leave ('L') (only from the day the machine was first used), or the approved leave that covers it;
       * Sundays and public holidays become 'H' when they have no row yet (e.g. for someone who joined later);
       * a day made from machine punches is judged Present / Half Day / Leave from its hours.
     Anything a person entered (source empty) is never changed. Safe to call again and again."""
     month = month or date.today().strftime("%Y-%m")
     y, m = int(month[:4]), int(month[5:7])
     first, last = date(y, m, 1), date(y, m, calendar.monthrange(y, m)[1])
-    end = min(last, date.today() - timedelta(days=1))
+    today_iso = date.today().isoformat()
+    end = min(last, date.today())       # today is judged from the punches so far, but a person who has not punched yet is not made Leave
     if end < first: return 0
     key = (tuple(sorted(emp_ids)) if emp_ids else None, month, date.today().isoformat())
     if time.monotonic() - _SETTLED.get(key, -1e9) < SETTLE_TTL: return 0      # settled a moment ago; any write clears this memory
@@ -1844,7 +1844,7 @@ def settle_days(emp_ids=None, month=None):
             if cur is None:
                 if off: ins.append((e["id"], iso, "H", None))
                 elif (e["id"], iso) in leave: ins.append((e["id"], iso, leave[(e["id"], iso)], None))
-                elif tracked_from and iso >= tracked_from: ins.append((e["id"], iso, "L", "auto"))
+                elif tracked_from and tracked_from <= iso < today_iso: ins.append((e["id"], iso, "L", "auto"))
             elif cur["source"] == "bio" and cur["status"] in ("P", "HD", "L") and cur["first_in"]:
                 judged = biometric.classify(cur["first_in"], cur["last_out"] or cur["first_in"])
                 if judged != cur["status"]: upd.append((judged, e["id"], iso))
