@@ -2,7 +2,7 @@
 // Attendance pages in the greytHR style:
 //   Attendance Info, My Regularizations (regularize a day), Regularization & Permission (ask for permission)
 
-const STATUS_NAME = { P: "Present", A: "Absent", CL: "Casual Leave", CO: "Comp Off", LOP: "Loss Of Pay", L: "Leave", HD: "Present / Leave", H: "Holiday", O: "Weekly Off" };
+const STATUS_NAME = { P: "Present", A: "Absent", CL: "Casual Leave", CO: "Comp Off", LOP: "Loss Of Pay", L: "Absent", HD: "Present / Absent", H: "Holiday", O: "Weekly Off" };
 const EXC = ["A", "L", "HD"];               // days that show a + to regularize (absent, leave without punch, half day)
 const REG_LIMIT = 3;                        // regularizations per person per month (the server enforces the same number)
 const BREAK_MIN = 45;                      // lunch break taken off the worked time
@@ -18,9 +18,9 @@ function attStats(days, shiftText, upTo) {
   const avgTotal = avg(worked);
   return {
     sh, rows, present: present.length - half / 2,
-    absent: rows.filter(d => d.status === "A").length,
+    absent: rows.filter(d => d.status === "A" || d.status === "L").length + half / 2,       // no punch / under 4.5 hours (stored as L) is Absent, and so is the missing half of a half day
     holidays: rows.filter(d => d.status === "H").length,
-    leave: rows.filter(d => ["CL", "CO", "LOP", "L"].includes(d.status)).length + half / 2,
+    leave: rows.filter(d => ["CL", "CO", "LOP"].includes(d.status)).length,
     half,
     late: sh.start == null ? 0 : present.filter(d => d.first_in && timeMins(d.first_in) > sh.start + LATE_GRACE).length,
     early: sh.end == null ? 0 : present.filter(d => d.last_out && timeMins(d.last_out) < sh.end).length,
@@ -66,7 +66,7 @@ P.attendance = async el => {
     const cell = c => {
       const d = byDate[c.iso], s = d && !c.out ? d.status : "";
       return `<div class="ac ${c.out ? "out" : ""} ${s ? "s-" + s : ""} ${c.iso === today ? "today" : ""} ${c.iso === sel && !c.out ? "sel" : ""}" data-d="${c.iso}" ${c.out ? "" : 'tabindex="0"'}>
-        <span class="ac-n">${pad2(c.day)}</span>${s === "HD" ? '<b class="ac-st"><i>P</i><i>L</i></b>' : s ? `<b class="ac-st">${esc(s)}</b>` : ""}${c.out ? "" : `<small class="ac-sh">${esc(sh.code)}</small>`}${!c.out && flagged(d) ? '<i class="ac-flag" title="Late in"></i>' : ""}</div>`;
+        <span class="ac-n">${pad2(c.day)}</span>${s === "HD" ? '<b class="ac-st"><i>P</i><i>A</i></b>' : s ? `<b class="ac-st">${esc(s === "L" ? "A" : s)}</b>` : ""}${c.out ? "" : `<small class="ac-sh">${esc(sh.code)}</small>`}${!c.out && flagged(d) ? '<i class="ac-flag" title="Late in"></i>' : ""}</div>`;
     };
     const grid = view === "grid"
       ? `<div class="ac-head">${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(x => `<div>${x}</div>`).join("")}</div><div class="ac-grid">${monthGrid(ym).map(cell).join("")}</div>`
@@ -83,11 +83,11 @@ P.attendance = async el => {
     const range = x => x ? `${hhmm(x[0])} - ${hhmm(x[1])}` : "-";
     // a half day shows one session as Present and the other as Half Day (the one the person was not there for)
     const cameLate = inM != null && s2 && inM >= s2[0] - 30;
-    const sessionStatus = n => !r ? "-" : r.status === "HD" ? ((n === 2) === cameLate ? "Present" : "Leave") : r.status === "P" ? "Present" : (STATUS_NAME[r.status] || r.status);
+    const sessionStatus = n => !r ? "-" : r.status === "HD" ? ((n === 2) === cameLate ? "Present" : "Absent") : r.status === "P" ? "Present" : (STATUS_NAME[r.status] || r.status);
 
     el.innerHTML = `<div class="att">
       <div class="att-top"><button class="btn" type="button" id="to-reg">My Regularizations</button></div>
-      ${exceptions ? `<div class="att-exc"><span class="exc-ic">!</span><span>${exceptions} exception day(s): leave / half day with no full punch</span><a href="#/my-regularizations">Regularize</a></div>` : ""}
+      ${exceptions ? `<div class="att-exc"><span class="exc-ic">!</span><span>${exceptions} exception day(s): absent / half day with no full punch</span><a href="#/my-regularizations">Regularize</a></div>` : ""}
       <div class="att-stats">
         <div class="stat-box"><div class="sb-h">AVG. WORK HRS</div><div class="sb-v">${hhmm(st.avgShift)}</div></div>
         <div class="stat-box"><div class="sb-h">AVG. ACTUAL WORK HRS</div><div class="sb-v">${hhmm(st.avgActual)}${change != null ? `<small class="${change < 0 ? "neg" : "pos"}">${change > 0 ? "+" : ""}${change}% From ${monthName(addMonths(ym, -1))}</small>` : ""}</div></div>
@@ -176,7 +176,7 @@ async function regulPage(el, cfg) {
     }).join("");
     const gapCount = gap.size;
     const calFoot = cfg.kind === "regularize"
-      ? `<div class="mc-foot">${gapCount} exception day(s). Days with a + are leave / half day: pick one, enter the right time and send it for approval.</div>`
+      ? `<div class="mc-foot">${gapCount} exception day(s). Days with a + are absent / half day: pick one, enter the right time and send it for approval.</div>`
       : `<div class="mc-foot two"><span class="neg">${gapCount} Gap day(s)</span><button type="button" class="btn sec" id="quick-add">Quick Add</button></div>`;
     const jump = picked.length ? `<div class="mc-jump"><small>JUMP TO</small>${picked.map(d => `<a href="#" data-jump="${d}">${dayNum(d)} ${weekdayOf(d)}</a>`).join("")}</div>` : "";
 

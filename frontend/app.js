@@ -32,7 +32,8 @@ function toast(m) { const t = $("#toast"); t.textContent = m; t.classList.add("s
 const titleCase = s => String(s || "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 const badge = s => `<span class="badge ${esc(s)}">${esc(titleCase(s))}</span>`;
 // A half day is never written "HD": it reads P on one side and L on the other (present for one half, leave for the other)
-const statusBadge = s => s === "HD" ? `<span class="badge HD">P | L</span>` : badge(s);
+// A day with too few hours (or no punch) is Absent: it is stored as L and shown as A everywhere
+const statusBadge = s => s === "HD" ? `<span class="badge HD">P | A</span>` : s === "L" ? `<span class="badge L">A</span>` : badge(s);
 function table(cols, rows, empty = "Nothing here yet.") {
   if (!rows.length) return `<p class="mute">${esc(empty)}</p>`;
   return `<div class="tablewrap"><table><thead><tr>${cols.map(c => `<th>${esc(c[0])}</th>`).join("")}</tr></thead><tbody>${rows.map(r => `<tr>${cols.map(c => `<td>${c[2] ? c[1](r) : esc(c[1](r))}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
@@ -1126,8 +1127,8 @@ P.admin = async el => {
       if (selEmpId) {
         const detail = await api("admin/attendance-overview?month=" + aoMonth + "&emp_id=" + selEmpId);
         const selEmp = overview.find(e => e.emp_id === selEmpId);
-        const statusLabel = { P: "Present", A: "Absent", CL: "Casual Leave", CO: "Comp Off", LOP: "Loss of Pay", H: "Holiday", O: "Weekly Off", L: "Leave (no punch)", HD: "Present / Leave" };
-        const statusColor = { P: "#388e3c", A: "#c62828", CL: "#1565c0", CO: "#6a1b9a", LOP: "#b71c1c", H: "#e65100", O: "#546e7a", L: "#8e3a9d", HD: "#b8860b" };
+        const statusLabel = { P: "Present", A: "Absent", CL: "Casual Leave", CO: "Comp Off", LOP: "Loss of Pay", H: "Holiday", O: "Weekly Off", L: "Absent (under 4.5 hours or no punch)", HD: "Present / Absent (4.5 to 9 hours)" };
+        const statusColor = { P: "#388e3c", A: "#c62828", CL: "#1565c0", CO: "#6a1b9a", LOP: "#b71c1c", H: "#e65100", O: "#546e7a", L: "#c62828", HD: "#b8860b" };
         drillHtml = `
         <div class="card" style="border-left:4px solid var(--brand);margin-top:16px">
           <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">
@@ -1138,7 +1139,7 @@ P.admin = async el => {
             ["Date", r => fdate(r.date)],
             ["Status", r => {
               const color = statusColor[r.status] || "#555";
-              return `<span style="display:inline-block;padding:3px 10px;border-radius:12px;background:${color};color:#fff;font-weight:700;font-size:12px">${r.status === "HD" ? "P | L" : esc(r.status)}</span> <span class="mute">${statusLabel[r.status] || r.status}</span>`;
+              return `<span style="display:inline-block;padding:3px 10px;border-radius:12px;background:${color};color:#fff;font-weight:700;font-size:12px">${r.status === "HD" ? "P | A" : r.status === "L" ? "A" : esc(r.status)}</span> <span class="mute">${statusLabel[r.status] || r.status}</span>`;
             }, 1],
             ["In Time", r => r.first_in || "—"],
             ["Out Time", r => r.last_out || "—"],
@@ -1171,7 +1172,6 @@ P.admin = async el => {
             <th style="color:#b71c1c">⚠ LOP</th>
             <th style="color:#e65100">🎉 Holiday</th>
             <th style="color:#546e7a">📅 W/Off</th>
-            <th style="color:#8e3a9d" title="Working day with no punch">🟣 Leave</th>
             <th style="color:#b8860b" title="Short day: part present, part leave">🌓 Half</th>
             <th>⏱ Hrs</th>
             <th>Total Days</th>
@@ -1183,18 +1183,17 @@ P.admin = async el => {
                 <td><b>${esc(r.name)}</b><br><small class="mute">${esc(r.designation || "")} · <span class="badge ${esc(r.role)}">${esc(r.role.toUpperCase())}</span></small></td>
                 <td>${esc(r.department || "—")}</td>
                 <td style="text-align:center">${stBadge(r.present, "P", "#388e3c")}</td>
-                <td style="text-align:center">${stBadge(r.absent, "A", "#c62828")}</td>
+                <td style="text-align:center" title="Absent: no punch, under 4.5 hours, or marked absent">${stBadge(r.absent + r.leave_no_punch, "A", "#c62828")}</td>
                 <td style="text-align:center">${stBadge(r.casual_leave, "CL", "#1565c0")}</td>
                 <td style="text-align:center">${stBadge(r.comp_off, "CO", "#6a1b9a")}</td>
                 <td style="text-align:center">${stBadge(r.lop, "LOP", "#b71c1c")}</td>
                 <td style="text-align:center">${stBadge(r.holiday, "H", "#e65100")}</td>
                 <td style="text-align:center">${stBadge(r.weekly_off, "O", "#546e7a")}</td>
-                <td style="text-align:center">${stBadge(r.leave_no_punch, "L", "#8e3a9d")}</td>
                 <td style="text-align:center">${stBadge(r.half_day, "HD", "#b8860b")}</td>
                 <td style="text-align:center;font-weight:600">${r.working_hours}h</td>
                 <td style="text-align:center">${r.total_days}</td>
               </tr>`).join("")}
-            ${!overview.length ? `<tr><td colspan="14" class="mute" style="text-align:center;padding:20px">No attendance data found for ${esc(aoMonth)}.</td></tr>` : ""}
+            ${!overview.length ? `<tr><td colspan="13" class="mute" style="text-align:center;padding:20px">No attendance data found for ${esc(aoMonth)}.</td></tr>` : ""}
           </tbody>
         </table></div>
         <p class="mute" style="margin-top:8px;font-size:12px">
@@ -1460,12 +1459,12 @@ async function showEmpAttendance(emp) {
     const hrs = rows.reduce((a, r) => { const m = r.first_in && r.last_out && r.last_out !== r.first_in ? workMins(r.first_in, r.last_out) : 0; return a + (m > 0 ? m : 0); }, 0);
     const cell = c => {
       const d = by[c.iso], s = d && !c.out ? d.status : "";
-      const st = s === "HD" ? '<b class="ac-st"><i>P</i><i>L</i></b>' : s ? `<b class="ac-st">${esc(s)}</b>` : "";
+      const st = s === "HD" ? '<b class="ac-st"><i>P</i><i>A</i></b>' : s ? `<b class="ac-st">${esc(s === "L" ? "A" : s)}</b>` : "";
       return `<div class="ac ${c.out ? "out" : ""} ${s ? "s-" + s : ""} ${c.iso === todayIso() ? "today" : ""}"><span class="ac-n">${pad2(c.day)}</span>${st}</div>`;
     };
     const timeOf = r => r.first_in ? (r.last_out && r.last_out !== r.first_in ? `${esc(r.first_in)} - ${esc(r.last_out)}` : esc(r.first_in)) : "-";
     const hoursOf = r => { const m = r.first_in && r.last_out && r.last_out !== r.first_in ? workMins(r.first_in, r.last_out) : 0; return m > 0 ? hhmm(m) : "-"; };
-    const chips = [["Present", n("P"), "#388e3c"], ["Half Day (P | L)", n("HD"), "#b8860b"], ["Leave (L)", n("L"), "#d32f2f"], ["CL / CO / LOP", n("CL", "CO", "LOP"), "#1565c0"], ["Absent", n("A"), "#c62828"], ["Holiday / Off", n("H", "O"), "#546e7a"], ["Total hours", hhmm(hrs), "#1f4e78"]];
+    const chips = [["Present", n("P"), "#388e3c"], ["Half Day (P | A)", n("HD"), "#b8860b"], ["Absent (A)", n("A", "L"), "#c62828"], ["CL / CO / LOP", n("CL", "CO", "LOP"), "#1565c0"], ["Holiday / Off", n("H", "O"), "#546e7a"], ["Total hours", hhmm(hrs), "#1f4e78"]];
     body.innerHTML = `<div class="cal-nav"><button type="button" id="ea-prev">‹ Prev</button><span style="display:flex;align-items:center;gap:10px"><b>${monthTitle(ym)}</b><input type="month" id="ea-month" value="${ym}" style="width:170px;padding:4px 8px" aria-label="Pick a month"></span><button type="button" id="ea-next">Next ›</button></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">${chips.map(c => `<span style="padding:4px 10px;border-radius:14px;border:1px solid ${c[2]};color:${c[2]};font-size:12px;font-weight:600">${c[0]}: ${c[1]}</span>`).join("")}</div>
       <div class="ac-head">${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(x => `<div>${x}</div>`).join("")}</div><div class="ac-grid">${monthGrid(ym).map(cell).join("")}</div>

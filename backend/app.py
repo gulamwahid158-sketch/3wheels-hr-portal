@@ -1476,7 +1476,7 @@ def _attendance_export_data(month):
             "manager_name": emp["manager_name"] or "—",
             "total_days": len(recs),
             "present": counts["P"],
-            "absent": counts["A"],
+            "absent": counts["A"] + counts["L"],       # no punch or under 4.5 hours (stored as L) is Absent
             "casual_leave": counts["CL"],
             "comp_off": counts["CO"],
             "lop": counts["LOP"],
@@ -1515,6 +1515,7 @@ def a_attendance_export(u):
         "CO": PatternFill("solid", fgColor="EDEDED"),
         "L": PatternFill("solid", fgColor="E4D1F0"),
         "HD": PatternFill("solid", fgColor="FFE699"),
+        "P/A": PatternFill("solid", fgColor="FFE699"),
     }
     status_fonts = {
         "P": Font(color="006100"),
@@ -1526,6 +1527,7 @@ def a_attendance_export(u):
         "CO": Font(color="595959"),
         "L": Font(color="5B2C83"),
         "HD": Font(color="7F6000"),
+        "P/A": Font(color="7F6000"),
     }
 
     wb = Workbook()
@@ -1536,7 +1538,7 @@ def a_attendance_export(u):
     summary_headers = [
         "Emp ID", "Name", "Designation", "Department", "Role", "Manager",
         "Present (P)", "Absent (A)", "Casual Leave (CL)", "Comp Off (CO)",
-        "Loss of Pay (LOP)", "Holiday (H)", "Weekly Off (O)", "Leave - no punch (L)", "Half Day (HD)",
+        "Loss of Pay (LOP)", "Holiday (H)", "Weekly Off (O)", "Half Day (P/A)",
         "Working Hours (hrs)", "Total Days Recorded", "Month",
     ]
     ws.append(summary_headers)
@@ -1545,7 +1547,7 @@ def a_attendance_export(u):
             r["emp_no"], r["name"], r["designation"] or "", r["department"] or "",
             (r["role"] or "").upper(), r["manager_name"],
             r["present"], r["absent"], r["casual_leave"], r["comp_off"],
-            r["lop"], r["holiday"], r["weekly_off"], r["leave_no_punch"], r["half_day"],
+            r["lop"], r["holiday"], r["weekly_off"], r["half_day"],
             r["working_hours"], r["total_days"], r["month"],
         ])
     for cell in ws[1]:
@@ -1557,11 +1559,11 @@ def a_attendance_export(u):
         for cell in row:
             cell.border = border
     for i, width in enumerate(
-        [10, 22, 24, 18, 10, 20, 12, 12, 16, 14, 16, 12, 14, 18, 14, 18, 20, 12], 1
+        [10, 22, 24, 18, 10, 20, 12, 12, 16, 14, 16, 12, 14, 14, 18, 20, 12], 1
     ):
         ws.column_dimensions[get_column_letter(i)].width = width
     ws.freeze_panes = "A2"
-    ws.auto_filter.ref = "A1:R%d" % (len(data) + 1)
+    ws.auto_filter.ref = "A1:Q%d" % (len(data) + 1)
 
     # ---- Sheet 2: Attendance Grid (employees as rows, dates as columns) ----
     ws2 = wb.create_sheet("Attendance Grid")
@@ -1574,7 +1576,7 @@ def a_attendance_export(u):
     grid_headers = (
         ["Emp ID", "Name", "Designation", "Department"]
         + date_labels
-        + ["Present", "Absent", "CL", "CO", "LOP", "Holiday", "Weekly Off", "Leave (L)", "Half Day",
+        + ["Present", "Absent", "CL", "CO", "LOP", "Holiday", "Weekly Off", "Half Day (P/A)",
            "Working Hours", "Total Days"]
     )
     ws2.append(grid_headers)
@@ -1583,10 +1585,11 @@ def a_attendance_export(u):
         row = [r["emp_no"], r["name"], r["designation"] or "", r["department"] or ""]
         for d in range(1, days_in_month + 1):
             rec = by_date.get("%s-%02d" % (month, d))
-            row.append(rec["status"] if rec else "")
+            st = rec["status"] if rec else ""
+            row.append("A" if st == "L" else "P/A" if st == "HD" else st)      # L (stored) is shown as A, a half day as P/A
         row += [
             r["present"], r["absent"], r["casual_leave"], r["comp_off"],
-            r["lop"], r["holiday"], r["weekly_off"], r["leave_no_punch"], r["half_day"],
+            r["lop"], r["holiday"], r["weekly_off"], r["half_day"],
             r["working_hours"], r["total_days"],
         ]
         ws2.append(row)
@@ -1599,7 +1602,7 @@ def a_attendance_export(u):
 
     date_start_col = 5
     date_end_col = 4 + days_in_month
-    summary_end_col = date_end_col + 11
+    summary_end_col = date_end_col + 10
     for row_idx in range(2, len(data) + 2):
         for col_idx in range(date_start_col, date_end_col + 1):
             cell = ws2.cell(row=row_idx, column=col_idx)
@@ -1620,7 +1623,7 @@ def a_attendance_export(u):
     ws2.column_dimensions["D"].width = 18
     for col_idx in range(date_start_col, date_end_col + 1):
         ws2.column_dimensions[get_column_letter(col_idx)].width = 7
-    for offset, width in enumerate([9, 8, 6, 6, 6, 8, 10, 10, 10, 14, 10]):
+    for offset, width in enumerate([9, 8, 6, 6, 6, 8, 10, 14, 14, 10]):
         ws2.column_dimensions[get_column_letter(date_end_col + 1 + offset)].width = width
     ws2.freeze_panes = "E2"
     ws2.auto_filter.ref = "A1:%s%d" % (
@@ -1631,9 +1634,9 @@ def a_attendance_export(u):
     legend_row = len(data) + 3
     ws2.cell(row=legend_row, column=1, value="Legend:").font = Font(bold=True)
     legend = [
-        ("P", "Present"), ("A", "Absent"), ("CL", "Casual Leave"),
+        ("P", "Present"), ("A", "Absent (no punch or under 4.5 h)"), ("CL", "Casual Leave"),
         ("LOP", "Loss of Pay"), ("H", "Holiday"), ("O", "Weekly Off"),
-        ("CO", "Comp Off"), ("L", "Leave (no punch)"), ("HD", "Half Day"),
+        ("CO", "Comp Off"), ("P/A", "Half Day (4.5 to 9 h)"),
     ]
     for idx, (code, label) in enumerate(legend):
         code_cell = ws2.cell(row=legend_row, column=2 + idx * 2, value=code)
