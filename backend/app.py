@@ -1,5 +1,6 @@
-import os, re, time, functools, smtplib, calendar
+import os, re, time, functools, smtplib, calendar, threading
 from io import BytesIO
+from concurrent.futures import ThreadPoolExecutor
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import date, timedelta, datetime
@@ -93,7 +94,32 @@ def run(sql, args=()):
     cur = c.execute(sql, args)
     c.commit(); lid = cur.lastrowid; c.close()
     if "employees" in sql[:60].lower(): _ME_CACHE.clear()          # someone's row changed: forget the remembered users
+    _SETTLED.clear()                                                # data changed: attendance is settled afresh on the next read
     return lid
+
+
+_POOLX = ThreadPoolExecutor(max_workers=6)
+_IN_POOL = threading.local()
+
+
+def _in_pool(call):
+    _IN_POOL.on = True
+    try: return call()
+    finally: _IN_POOL.on = False
+
+
+def par(*calls):
+    """Run independent database reads at the same time and return their results in order.
+    The database is remote (~60-200 ms per trip), so N reads one after another cost N trips, side by side about one.
+    Each call must only use q()/db.conn() with values worked out beforehand (no request or session inside).
+    A par() started from inside another par() runs its calls one by one, so the pool can never wait on itself."""
+    if len(calls) == 1 or getattr(_IN_POOL, "on", False): return [c() for c in calls]
+    futs = [_POOLX.submit(_in_pool, c) for c in calls]
+    return [f.result() for f in futs]
+
+
+_SETTLED = {}         # (employees, month, today) -> time of the last settle_days run, so page loads in quick succession do not repeat it
+SETTLE_TTL = 60
 
 
 _ME_CACHE = {}        # uid -> (time, row): the signed-in user's row is read on every request, and each database trip costs ~60 ms
@@ -190,8 +216,10 @@ def leave_types_cached():
 def balances(emp_id):
     out = []
     grants = {}
-    for g_ in q("SELECT * FROM leave_grants WHERE emp_id=? ORDER BY id", (emp_id,)): grants.setdefault(g_["code"], g_)      # 3 queries in total, not 2 per leave type (the database is remote)
-    spent = {r["code"]: r["s"] for r in q("SELECT code, COALESCE(SUM(days),0) s FROM requests WHERE emp_id=? AND kind IN('leave','rh') AND status IN('approved','pending') GROUP BY code", (emp_id,))}
+    grant_rows, spent_rows = par(lambda: q("SELECT * FROM leave_grants WHERE emp_id=? ORDER BY id", (emp_id,)),
+                                 lambda: q("SELECT code, COALESCE(SUM(days),0) s FROM requests WHERE emp_id=? AND kind IN('leave','rh') AND status IN('approved','pending') GROUP BY code", (emp_id,)))
+    for g_ in grant_rows: grants.setdefault(g_["code"], g_)      # 2 trips side by side, not 2 per leave type (the database is remote)
+    spent = {r["code"]: r["s"] for r in spent_rows}
     for t in leave_types_cached():
         g = grants.get(t["code"]) or {"granted": 0, "opening_used": 0}
         used = spent.get(t["code"], 0)
@@ -219,10 +247,12 @@ def logout(): session.clear(); return jsonify(ok=True)
 @auth()
 def whoami(u):
     u.pop("password_hash")
-    mgr = q("SELECT name FROM employees WHERE id=?", (u["manager_id"],), one=True)
+    mgr, unread, pending = par(lambda: q("SELECT name FROM employees WHERE id=?", (u["manager_id"],), one=True),
+                               lambda: q("SELECT COUNT(*) c FROM notifications WHERE emp_id=? AND is_read=0", (u["id"],), one=True),
+                               lambda: pending_review_count(u))
     u["manager_name"] = mgr["name"] if mgr else None
-    u["unread"] = q("SELECT COUNT(*) c FROM notifications WHERE emp_id=? AND is_read=0", (u["id"],), one=True)["c"]
-    u["pending_reviews"] = pending_review_count(u)
+    u["unread"] = unread["c"]
+    u["pending_reviews"] = pending
     return jsonify(u)
 
 
@@ -256,14 +286,16 @@ def notifs(u):
 @auth()
 def home(u):
     today = date.today().isoformat()
-    return jsonify(
-        holidays=q("SELECT * FROM holidays WHERE date>=? ORDER BY date LIMIT 3", (today,)),
-        balances=balances(u["id"]),
-        pending_reviews=pending_review_count(u),
-        payslip=q("SELECT * FROM payslips WHERE emp_id=? ORDER BY month DESC LIMIT 1", (u["id"],), one=True),
-        tasks=q("SELECT * FROM tasks WHERE emp_id=? AND done=0 ORDER BY due_date LIMIT 5", (u["id"],)),
-        birthdays=q("SELECT name,dob FROM employees WHERE substr(dob,6,5)=? AND active=1", (date.today().strftime("%m-%d"),)),
-        tracking=q("SELECT kind,status,created_at FROM requests WHERE emp_id=? ORDER BY id DESC LIMIT 3", (u["id"],)))
+    md = date.today().strftime("%m-%d")
+    hol, bal, pend, pay, tasks_, bdays, track = par(
+        lambda: q("SELECT * FROM holidays WHERE date>=? ORDER BY date LIMIT 3", (today,)),
+        lambda: balances(u["id"]),
+        lambda: pending_review_count(u),
+        lambda: q("SELECT * FROM payslips WHERE emp_id=? ORDER BY month DESC LIMIT 1", (u["id"],), one=True),
+        lambda: q("SELECT * FROM tasks WHERE emp_id=? AND done=0 ORDER BY due_date LIMIT 5", (u["id"],)),
+        lambda: q("SELECT name,dob FROM employees WHERE substr(dob,6,5)=? AND active=1", (md,)),
+        lambda: q("SELECT kind,status,created_at FROM requests WHERE emp_id=? ORDER BY id DESC LIMIT 3", (u["id"],)))
+    return jsonify(holidays=hol, balances=bal, pending_reviews=pend, payslip=pay, tasks=tasks_, birthdays=bdays, tracking=track)
 
 
 # ---------- leave ----------
@@ -564,19 +596,19 @@ def designations_master(u):
 @auth()
 def people(u):
     s = "%" + request.args.get("q", "") + "%"
-    rows = q("SELECT id,emp_no,biometric_id,name,email,department,designation,location,join_date,substr(dob,6) dob,skills,manager_id,role FROM employees WHERE active=1 AND (name LIKE ? OR department LIKE ? OR emp_no LIKE ?) ORDER BY name", (s, s, s))
-    
-    # Pre-fetch all direct reports for team counts and members
-    all_reports = q("SELECT id, name, manager_id FROM employees WHERE active=1 AND manager_id IS NOT NULL")
+    # five independent reads run side by side: the list, everyone's direct reports, CL grants, CL used, and all names
+    rows, all_reports, grant_rows, used_rows, name_rows = par(
+        lambda: q("SELECT id,emp_no,biometric_id,name,email,department,designation,location,join_date,substr(dob,6) dob,skills,manager_id,role FROM employees WHERE active=1 AND (name LIKE ? OR department LIKE ? OR emp_no LIKE ?) ORDER BY name", (s, s, s)),
+        lambda: q("SELECT id, name, manager_id FROM employees WHERE active=1 AND manager_id IS NOT NULL"),
+        lambda: q("SELECT * FROM leave_grants WHERE code='CL'"),
+        lambda: q("SELECT emp_id, COALESCE(SUM(days),0) s FROM requests WHERE code='CL' AND kind IN('leave','rh') AND status IN('approved','pending') GROUP BY emp_id"),
+        lambda: q("SELECT id, name FROM employees"))
     report_map = {}
     for r in all_reports:
         report_map.setdefault(r["manager_id"], []).append(r["name"])
-
-    # Pre-fetch Casual Leave (CL) balances for each member
-    cl_grants = {g["emp_id"]: g for g in q("SELECT * FROM leave_grants WHERE code='CL'")}
-    cl_used = {u_row["emp_id"]: u_row["s"] for u_row in q("SELECT emp_id, COALESCE(SUM(days),0) s FROM requests WHERE code='CL' AND kind IN('leave','rh') AND status IN('approved','pending') GROUP BY emp_id")}
-
-    names = {e["id"]: e["name"] for e in q("SELECT id, name FROM employees")}      # one query, not one per person (the database is remote)
+    cl_grants = {g["emp_id"]: g for g in grant_rows}
+    cl_used = {u_row["emp_id"]: u_row["s"] for u_row in used_rows}
+    names = {e["id"]: e["name"] for e in name_rows}      # one query, not one per person (the database is remote)
     for r in rows:
         r["manager_name"] = names.get(r["manager_id"])
         team = report_map.get(r["id"], [])
@@ -630,24 +662,32 @@ def feed(u):
     """One timeline for the Engage page: posts, polls, kudos and automatic birthday
     posts (today and the last 7 days), newest first, each with its reactions."""
     items = []
+    vote_rows, my_vote_rows, post_rows, kudos_rows, bday_rows, react_rows, mine_rows = par(      # seven independent reads, one trip's time
+        lambda: q("SELECT post_id, `option`, COUNT(*) c FROM poll_votes GROUP BY post_id, `option`"),
+        lambda: q("SELECT post_id, `option` FROM poll_votes WHERE emp_id=?", (u["id"],)),
+        lambda: q("SELECT p.*, e.name author, e.location, e.department FROM posts p JOIN employees e ON e.id=p.author_id"),
+        lambda: q("SELECT k.*, a.name from_name, b.name to_name, b.location, b.department FROM kudos k "
+                  "JOIN employees a ON a.id=k.from_id JOIN employees b ON b.id=k.to_id"),
+        lambda: q("SELECT id, name, dob, location, department, designation FROM employees WHERE active=1 AND dob IS NOT NULL AND dob<>''"),
+        lambda: q("SELECT item_key, emoji, COUNT(*) c FROM reactions GROUP BY item_key, emoji"),
+        lambda: q("SELECT item_key, emoji FROM reactions WHERE emp_id=?", (u["id"],)))
 
     votes = {}
-    for v in q("SELECT post_id, `option`, COUNT(*) c FROM poll_votes GROUP BY post_id, `option`"):
+    for v in vote_rows:
         votes.setdefault(v["post_id"], {})[v["option"]] = v["c"]
-    my_votes = {v["post_id"]: v["option"] for v in q("SELECT post_id, `option` FROM poll_votes WHERE emp_id=?", (u["id"],))}
-    for p in q("SELECT p.*, e.name author, e.location, e.department FROM posts p JOIN employees e ON e.id=p.author_id"):
+    my_votes = {v["post_id"]: v["option"] for v in my_vote_rows}
+    for p in post_rows:
         item = dict(p, key="post:%d" % p["id"], kind=p["type"], group="Announcements")
         if p["type"] == "poll":
             item["results"] = votes.get(p["id"], {})
             item["my_vote"] = my_votes.get(p["id"])
         items.append(item)
 
-    for k in q("SELECT k.*, a.name from_name, b.name to_name, b.location, b.department FROM kudos k "
-               "JOIN employees a ON a.id=k.from_id JOIN employees b ON b.id=k.to_id"):
+    for k in kudos_rows:
         items.append(dict(k, key="kudos:%d" % k["id"], kind="kudos", group="Recognition", author=k["from_name"], body=k["message"]))
 
     today = date.today()
-    for e in q("SELECT id, name, dob, location, department, designation FROM employees WHERE active=1 AND dob IS NOT NULL AND dob<>''"):
+    for e in bday_rows:
         for year in (today.year, today.year - 1):  # a birthday just before New Year is still recent in January
             try:
                 when = date(year, int(e["dob"][5:7]), int(e["dob"][8:10]))
@@ -661,9 +701,9 @@ def feed(u):
                 break
 
     counts = {}
-    for r in q("SELECT item_key, emoji, COUNT(*) c FROM reactions GROUP BY item_key, emoji"):
+    for r in react_rows:
         counts.setdefault(r["item_key"], {})[r["emoji"]] = r["c"]
-    mine = {r["item_key"]: r["emoji"] for r in q("SELECT item_key, emoji FROM reactions WHERE emp_id=?", (u["id"],))}
+    mine = {r["item_key"]: r["emoji"] for r in mine_rows}
     for it in items:
         it["reactions"] = counts.get(it["key"], {})
         it["my_reaction"] = mine.get(it["key"])
@@ -819,12 +859,9 @@ def pending_review_count(u):
 def pending_reviews(u):
     ids = approver_ids(u); ph = ",".join("?" * len(ids))
     out = []
-    for r in q("SELECT r.*, e.name emp_name FROM requests r JOIN employees e ON e.id=r.emp_id WHERE r.approver_id IN (%s) AND r.status='pending'" % ph, ids):
-        r["type"] = "request"; out.append(r)
-    for r in q("SELECT r.*, e.name emp_name FROM regularizations r JOIN employees e ON e.id=r.emp_id WHERE r.approver_id IN (%s) AND r.status='pending'" % ph, ids):
-        r["type"] = "regularization"; out.append(r)
-    for t, n in (("reimbursements", "reimbursement"), ("loans", "loan")):
-        for r in q("SELECT r.*, e.name emp_name FROM %s r JOIN employees e ON e.id=r.emp_id WHERE r.approver_id IN (%s) AND r.status='pending'" % (t, ph), ids):
+    kinds = (("requests", "request"), ("regularizations", "regularization"), ("reimbursements", "reimbursement"), ("loans", "loan"))
+    for (t, n), rows in zip(kinds, par(*[lambda t=t: q("SELECT r.*, e.name emp_name FROM %s r JOIN employees e ON e.id=r.emp_id WHERE r.approver_id IN (%s) AND r.status='pending'" % (t, ph), ids) for t, _ in kinds])):
+        for r in rows:
             r["type"] = n; out.append(r)
     return out
 
@@ -836,13 +873,16 @@ def review(u):
     caller already decided. HR and leadership also see resignations and helpdesk tickets here."""
     if request.args.get("status") == "closed":
         return jsonify(closed_reviews(u))
-    out = pending_reviews(u)
     if u["role"] in ADMIN_ROLES:
-        for r in q("SELECT r.*, e.name emp_name, e.department, e.designation FROM resignations r JOIN employees e ON e.id=r.emp_id WHERE r.status='pending' ORDER BY r.id DESC"):
+        out, resign, tix = par(lambda: pending_reviews(u),
+                               lambda: q("SELECT r.*, e.name emp_name, e.department, e.designation FROM resignations r JOIN employees e ON e.id=r.emp_id WHERE r.status='pending' ORDER BY r.id DESC"),
+                               lambda: q("SELECT t.*, e.name emp_name FROM tickets t JOIN employees e ON e.id=t.emp_id WHERE t.status IN ('open','in_progress') ORDER BY t.id DESC"))
+        for r in resign:
             r["type"] = "resignation"; out.append(r)
-        for t in q("SELECT t.*, e.name emp_name FROM tickets t JOIN employees e ON e.id=t.emp_id WHERE t.status IN ('open','in_progress') ORDER BY t.id DESC"):
+        for t in tix:
             t["type"] = "ticket"; out.append(t)
-    return jsonify(out)
+        return jsonify(out)
+    return jsonify(pending_reviews(u))
 
 
 def closed_reviews(u):
@@ -914,6 +954,7 @@ def execute_decision(table, typ, r, rid, action, decider):
             else:
                 c.execute("UPDATE attendance SET status='P',first_in=?,last_out=?,source=NULL WHERE emp_id=? AND date=?", (r["in_time"], r["out_time"], r["emp_id"], r["date"]))
     c.commit(); c.close()
+    _SETTLED.clear()
     notify(r["emp_id"], "Your %s request was %s by %s" % (typ, st, decider["name"]))
 
     # When a manager/TL/lead decides a leave/request, notify HR in real-time
@@ -997,17 +1038,19 @@ def delegate_del(u, did):
 @auth()
 def hub(u):
     out = []
-    for r in q("SELECT * FROM requests WHERE emp_id=?", (u["id"],)):
+    reqs, regs, reimb, loans_, tix, resign = par(*[lambda t=t: q("SELECT * FROM %s WHERE emp_id=?" % t, (u["id"],))
+        for t in ("requests", "regularizations", "reimbursements", "loans", "tickets", "resignations")])
+    for r in reqs:
         out.append(dict(type=r["kind"], summary="%s %s→%s" % (r["code"], r["from_date"], r["to_date"]), status=r["status"], created_at=r["created_at"]))
-    for r in q("SELECT * FROM regularizations WHERE emp_id=?", (u["id"],)):
+    for r in regs:
         out.append(dict(type=r["kind"], summary=r["date"], status=r["status"], created_at=r["created_at"]))
-    for r in q("SELECT * FROM reimbursements WHERE emp_id=?", (u["id"],)):
+    for r in reimb:
         out.append(dict(type="reimbursement", summary="%s ₹%s" % (r["category"], r["amount"]), status=r["status"], created_at=r["created_at"]))
-    for r in q("SELECT * FROM loans WHERE emp_id=?", (u["id"],)):
+    for r in loans_:
         out.append(dict(type="loan", summary="₹%s / %s mo" % (r["amount"], r["tenure_months"]), status=r["status"], created_at=r["created_at"]))
-    for r in q("SELECT * FROM tickets WHERE emp_id=?", (u["id"],)):
+    for r in tix:
         out.append(dict(type="helpdesk", summary=r["subject"], status=r["status"], created_at=r["created_at"]))
-    for r in q("SELECT * FROM resignations WHERE emp_id=?", (u["id"],)):
+    for r in resign:
         out.append(dict(type="resignation", summary=r["last_day"], status=r["status"], created_at=r["created_at"]))
     return jsonify(sorted(out, key=lambda x: x["created_at"] or "", reverse=True))
 
@@ -1747,6 +1790,7 @@ def rebuild_attendance(emp_id=None):
         c.commit()
     finally:
         c.close()
+    _SETTLED.clear()
     stats["inserted"], stats["updated"] = len(ins), len(upd)
     return stats
 
@@ -1765,19 +1809,25 @@ def settle_days(emp_ids=None, month=None):
     first, last = date(y, m, 1), date(y, m, calendar.monthrange(y, m)[1])
     end = min(last, date.today() - timedelta(days=1))
     if end < first: return 0
+    key = (tuple(sorted(emp_ids)) if emp_ids else None, month, date.today().isoformat())
+    if time.monotonic() - _SETTLED.get(key, -1e9) < SETTLE_TTL: return 0      # settled a moment ago; any write clears this memory
     where, args = "active=1", []
     if emp_ids: where += " AND id IN (%s)" % ",".join("?" * len(emp_ids)); args += list(emp_ids)
     emps = q("SELECT id, join_date FROM employees WHERE " + where, args)
     if not emps: return 0
-    hol = {h["date"] for h in q("SELECT date FROM holidays WHERE restricted=0 AND substr(date,1,7)=?", (month,))}
-    first_punch = q("SELECT MIN(punch_at) m FROM biometric_punches", one=True)["m"]
-    tracked_from = str(first_punch)[:10] if first_punch else None      # before the machine was in use a missing punch means nothing
     ids = [e["id"] for e in emps]; ph = ",".join("?" * len(ids))
-    have = {(r["emp_id"], r["date"]): r for r in q(
-        "SELECT emp_id, date, status, first_in, last_out, source FROM attendance WHERE substr(date,1,7)=? AND emp_id IN (%s)" % ph, [month] + ids)}
+    hol_rows, first_punch_row, have_rows, leave_rows = par(          # four independent reads, one trip's time
+        lambda: q("SELECT date FROM holidays WHERE restricted=0 AND substr(date,1,7)=?", (month,)),
+        lambda: q("SELECT MIN(punch_at) m FROM biometric_punches", one=True),
+        lambda: q("SELECT emp_id, date, status, first_in, last_out, source FROM attendance WHERE substr(date,1,7)=? AND emp_id IN (%s)" % ph, [month] + ids),
+        lambda: q("SELECT emp_id, code, from_date, to_date FROM requests WHERE kind='leave' AND status='approved' AND from_date<=? AND to_date>=? AND emp_id IN (%s)" % ph,
+                  [last.isoformat(), first.isoformat()] + ids))
+    hol = {h["date"] for h in hol_rows}
+    first_punch = first_punch_row["m"]
+    tracked_from = str(first_punch)[:10] if first_punch else None      # before the machine was in use a missing punch means nothing
+    have = {(r["emp_id"], r["date"]): r for r in have_rows}
     leave = {}
-    for r in q("SELECT emp_id, code, from_date, to_date FROM requests WHERE kind='leave' AND status='approved' AND from_date<=? AND to_date>=? AND emp_id IN (%s)" % ph,
-               [last.isoformat(), first.isoformat()] + ids):
+    for r in leave_rows:
         d_ = max(pdate(r["from_date"]), first)
         while d_ <= min(pdate(r["to_date"]), last):
             leave[(r["emp_id"], d_.isoformat())] = r["code"] if r["code"] != "LOP" else "A"
@@ -1806,6 +1856,7 @@ def settle_days(emp_ids=None, month=None):
         c.commit()
     finally:
         c.close()
+    _SETTLED[key] = time.monotonic()
     return len(ins) + len(upd)
 
 

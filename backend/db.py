@@ -273,7 +273,7 @@ def _connect(database=None):
 # are kept in a small pool and reused instead of opened for every query.
 _POOL = []  # idle raw connections as (connection, last_used_timestamp)
 _POOL_LOCK = threading.Lock()
-_POOL_MAX = int(os.environ.get("DB_POOL_SIZE", "4"))
+_POOL_MAX = int(os.environ.get("DB_POOL_SIZE", "6"))    # app.par() runs up to 6 reads at once, so keep that many connections warm
 _PING_AFTER = 10  # seconds idle before a connection is checked and revived
 
 
