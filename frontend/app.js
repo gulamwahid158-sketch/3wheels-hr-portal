@@ -416,7 +416,12 @@ P.poi = crud("Proof of Investment", "poi", [FY, { n: "section", label: "Section"
 P.reimbursement = crud("Reimbursement", "reimbursement", [{ n: "category", label: "Category", type: "select", opts: ["Internet", "Travel", "Medical", "Phone", "Other"].map(x => [x, x]) }, { n: "amount", label: "Amount (₹)", type: "number", step: "0.01" }, { n: "bill_date", label: "Bill date", type: "date" }, { n: "description", label: "Description", req: false }], [["Category", r => r.category], ["Amount", r => inr(r.amount)], ["Bill date", r => fdate(r.bill_date)], ["Status", r => badge(r.status), 1]]);
 P.loans = crud("Loans and Advances", "loans", [{ n: "amount", label: "Amount (₹)", type: "number" }, { n: "tenure_months", label: "Tenure (months)", type: "number" }, { n: "reason", label: "Reason", type: "textarea" }], [["Amount", r => inr(r.amount)], ["Tenure", r => r.tenure_months + " mo"], ["Reason", r => r.reason], ["Status", r => badge(r.status), 1]]);
 P.helpdesk = crud("Helpdesk", "tickets", [{ n: "category", label: "Category", type: "select", opts: ["IT", "HR", "Finance", "Admin"].map(x => [x, x]) }, { n: "subject", label: "Subject" }, { n: "body", label: "Details", type: "textarea" }], [["#", r => r.id], ["Category", r => r.category], ["Subject", r => r.subject], ["Status", r => badge(r.status), 1], ["Opened", r => fdate(r.created_at)]], "Raise ticket");
-P.resignation = crud("Resignation", "resignation", [{ n: "last_day", label: "Proposed last working day", type: "date" }, { n: "reason", label: "Reason", type: "textarea" }], [["Last day", r => fdate(r.last_day)], ["Reason", r => r.reason], ["Status", r => badge(r.status), 1]], "Submit resignation");
+// Resignation is switched off for now: the button is disabled (the server refuses it too, see RESIGNATION_OPEN in app.py). Earlier requests stay visible.
+P.resignation = async el => {
+  const rows = await api("resignation");
+  el.innerHTML = `<h1>Resignation</h1><div class="card"><button class="btn" type="button" disabled>Submit resignation</button><p class="mute">Resignation is turned off right now. Please contact your Reporting Manager or HR.</p></div>
+    <div class="card">${table([["Last day", r => fdate(r.last_day)], ["Reason", r => r.reason], ["Status", r => badge(r.status), 1]], rows)}</div>`;
+};
 P["salary-revision"] = async el => {
   const r = await api("salary-revisions");
   el.innerHTML = `<h1>Salary Revision</h1><div class="card">${table([["Effective", x => fdate(x.effective_from)], ["Old CTC", x => inr(x.old_ctc)], ["New CTC", x => inr(x.new_ctc)], ["Note", x => x.note]], r)}</div>`;
@@ -533,7 +538,7 @@ const TITLES = { home: "Home", engage: "Engage", kudos: "Kudos", feedback: "Feed
 const ROUTE_ALIAS = { "my-regularizations": "attendance" };
 TITLES["my-regularizations"] = "My Regularizations";
 const CRUMB_COLOR = { home: "#c4b5fd", engage: "#fdba9b", kudos: "#5ed3d1", feedback: "#5ed3d1", tasks: "#86d9a0", review: "#86d9a0", "leave-apply": "#5fd1d8", "leave-balances": "#5fd1d8", "leave-calendar": "#5fd1d8", holidays: "#5fd1d8", attendance: "#c4b5fd", regularization: "#c4b5fd", documents: "#f0a8d8", people: "#c4b5fd" };
-const QUICK_LINKS = [["#/payslips", "Payslips"], ["#/leave-apply", "Apply Leave"], ["#/attendance", "Attendance Info"], ["#/regularization", "Regularization"], ["#/holidays", "Holiday Calendar"], ["#/documents", "Document Center"], ["#/people", "People Directory"], ["#/helpdesk", "Raise a Ticket"], ["#/my-info", "Change Password"]];
+const QUICK_LINKS = [["#/payslips", "Payslips"], ["#/leave-apply", "Apply Leave"], ["#/attendance", "Attendance Info"], ["#/regularization", "Regularization"], ["#/holidays", "Holiday Calendar"], ["#/documents", "Document Center"], ["#/people", "People Directory"], ["#/helpdesk", "Raise a Ticket"]];
 // Pages can replace the header trail, e.g. setCrumb(["Attendance Info", "My Regularizations"])
 function setCrumb(parts) {
   const el = $("#crumb"); if (!el) return;
@@ -544,19 +549,24 @@ P["my-info"] = async el => {
   const m = ME;
   el.innerHTML = `<h1>My Info</h1><div class="card"><div style="display:flex;gap:16px;align-items:center"><span class="avatar big">${esc(m.name[0])}</span><div><h2 style="margin:0">${esc(m.name)}</h2><span class="mute">${esc(m.designation)} · ${esc(m.department)}</span></div></div></div>
   <div class="card grid">${[["Employee ID", m.emp_no], ["Machine ID", m.biometric_id || "-"], ["Email", m.email], ["Location", m.location], ["Joined", fdate(m.join_date)], ["Reports to", m.manager_name || "-"], ["Shift", m.shift], ["Skills", m.skills]].map(([k, v]) => `<div><span class="mute">${esc(k)}</span><div>${esc(v)}</div></div>`).join("")}</div>
-  <div class="card" style="max-width:520px"><h2>Change Password</h2>${form("cp", [{ n: "current_password", label: "Current password", type: "password" }, { n: "new_password", label: "New password (min 8 characters)", type: "password" }, { n: "confirm_password", label: "Type the new password again", type: "password" }], "Change password")}</div>
+  <div class="card"><h2>Password</h2><button class="btn" type="button" id="cp-open">Change Password</button></div>
   <div class="card"><h2>Other</h2><a href="#/resignation">Resignation</a></div>`;
+  $("#cp-open").onclick = changePasswordDialog;
+};
+function changePasswordDialog() {
+  openDialog("Change Password", form("cp", [{ n: "current_password", label: "Current password", type: "password" }, { n: "new_password", label: "New password (min 8 characters)", type: "password" }, { n: "confirm_password", label: "Type the new password again", type: "password" }], "Change password"));
   const cp = $("#cp");
+  $("#cp-current_password").focus();
   cp.onsubmit = async e => {
     e.preventDefault();
     const err = $("#cp-err"), d = Object.fromEntries(new FormData(cp));
     err.textContent = "";
     if (!d.current_password || !d.new_password) { err.textContent = "Fill in all three fields."; return; }
     if (d.new_password !== d.confirm_password) { err.textContent = "The two new passwords do not match."; return; }
-    try { await api("me/password", "POST", { current_password: d.current_password, new_password: d.new_password }); cp.reset(); toast("Password changed. Use the new one next time you sign in."); }
+    try { await api("me/password", "POST", { current_password: d.current_password, new_password: d.new_password }); closeDialog(); toast("Password changed. Use the new one next time you sign in."); }
     catch (er) { err.textContent = er.message; }
   };
-};
+}
 P.delegates = async el => {
   const draw = async () => {
     const [d, ppl] = await Promise.all([api("delegates"), peopleOpts()]);

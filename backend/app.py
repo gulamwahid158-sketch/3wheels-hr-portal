@@ -30,6 +30,7 @@ HR_LIKE_ROLES = ("hr", "admin")                                  # manage people
 ADMIN_ROLES = HR_LIKE_ROLES + ("ceo", "coo", "cpo", "executive", "superadmin")
 ROLES = ("employee", "manager", "hr", "admin", "ceo", "coo", "cpo", "executive", "superadmin")
 EMP_EXTRA_FIELDS = tuple(name for name, _ in db.EMPLOYEE_EXTRA_COLUMNS)
+RESIGNATION_OPEN = False   # new resignations are switched off for now; set True (and enable the button in app.js) to allow them again
 REG_LIMIT = 3          # regularizations (pending or approved) one person may have for the days of one month
 REG_LIMIT_MSG = "You have already used your %d regularizations for this month. Please contact your Reporting Manager or HR." % REG_LIMIT
 
@@ -629,6 +630,8 @@ def simple_resource(path, table, fields, required, extra_status=None):
         return jsonify(q("SELECT * FROM %s WHERE emp_id=? ORDER BY id DESC" % table, (u["id"],)))
 
     def add(u):
+        if table == "resignations" and not RESIGNATION_OPEN:
+            return jsonify(error="Resignation is turned off right now. Please contact your Reporting Manager or HR."), 403
         j = body(*required)
         cols = ["emp_id"] + fields; vals = [u["id"]] + [j.get(f) for f in fields]
         if "approver_id" in db.columns(table):

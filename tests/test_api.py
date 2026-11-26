@@ -311,6 +311,7 @@ def test_leave_contact_and_chosen_approver():
     assert k.post("/api/leave/rh", json={"date": "2027-03-03", "reason": "Holi", "approver_id": mid}).status_code == 200  # restricted holiday can name its approver too
 
 def test_review_inbox_active_closed_resignations_and_tickets():
+    A.RESIGNATION_OPEN = True
     k, m, ceo = login("komal@example.com"), login("manager@example.com"), login("ceo@example.com")
     rid = k.post("/api/leave/apply", json={"code": "LOP", "from_date": "2027-04-05", "to_date": "2027-04-05", "reason": "x"}).get_json()["id"]
     k.post("/api/resignation", json={"last_day": "2027-06-30", "reason": "Moving on"})
@@ -506,6 +507,7 @@ def test_security_rules():
 
 
 def test_resignation_notifies_manager_hr_manager_and_leadership():
+    A.RESIGNATION_OPEN = True
     A.run("UPDATE employees SET designation='HR Manager' WHERE email='hr@example.com'")
     k = login("kabir@example.com")
     last = A.q("SELECT COALESCE(MAX(id),0) m FROM notifications", one=True)["m"]
@@ -514,6 +516,12 @@ def test_resignation_notifies_manager_hr_manager_and_leadership():
     want = {r["email"] for r in A.q("SELECT email FROM employees WHERE active=1 AND (designation='HR Manager' OR role IN ('ceo','coo','cpo'))")} | {"manager@example.com"}
     assert got == want and "kabir@example.com" not in got
     assert A.q("SELECT COUNT(*) c FROM notifications WHERE id>?", (last,), one=True)["c"] == len(want)      # one each
+
+
+def test_resignation_is_switched_off():
+    A.RESIGNATION_OPEN = False
+    r = login("kabir@example.com").post("/api/resignation", json={"last_day": "2027-02-28", "reason": "x"})
+    assert r.status_code == 403 and "turned off" in r.get_json()["error"]
 
 
 def test_designation_master_list():
