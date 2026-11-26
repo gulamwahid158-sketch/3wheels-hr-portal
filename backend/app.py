@@ -555,21 +555,29 @@ def month_arg():
 def my_team(u):
     month = month_arg()
     members = team_of(u, request.args.get("scope") == "all")
-    if not members: return jsonify(members=[], pending=[], today=date.today().isoformat(), month=month)
+    if not members: return jsonify(members=[], pending=[], daily=[], upcoming_leave=[], today=date.today().isoformat(), month=month)
     ids = [e["id"] for e in members]; ph = ",".join("?" * len(ids))
     settle_days(ids, month)
     today = date.today().isoformat()
-    rows, today_rows, reqs, regs = par(
-        lambda: q("SELECT emp_id, status, first_in, last_out FROM attendance WHERE substr(date,1,7)=? AND emp_id IN (%s)" % ph, [month] + ids),
+    rows, today_rows, reqs, regs, ahead, bdays = par(
+        lambda: q("SELECT emp_id, date, status, first_in, last_out FROM attendance WHERE substr(date,1,7)=? AND emp_id IN (%s)" % ph, [month] + ids),
         lambda: q("SELECT emp_id, status, first_in, last_out FROM attendance WHERE date=? AND emp_id IN (%s)" % ph, [today] + ids),
         lambda: q("SELECT emp_id, kind, code, from_date, to_date, days, reason FROM requests WHERE status='pending' AND emp_id IN (%s) ORDER BY id DESC" % ph, ids),
-        lambda: q("SELECT emp_id, kind, date, in_time, out_time, reason FROM regularizations WHERE status='pending' AND emp_id IN (%s) ORDER BY id DESC" % ph, ids))
+        lambda: q("SELECT emp_id, kind, date, in_time, out_time, reason FROM regularizations WHERE status='pending' AND emp_id IN (%s) ORDER BY id DESC" % ph, ids),
+        lambda: q("SELECT emp_id, code, from_date, to_date, days FROM requests WHERE kind='leave' AND status='approved' AND to_date>=? AND emp_id IN (%s) ORDER BY from_date" % ph, [today] + ids),
+        lambda: q("SELECT id, substr(dob,6,5) md FROM employees WHERE id IN (%s)" % ph, ids))      # day and month only, never the year
     by = {e["id"]: e for e in members}
-    for e in members: e.update(present=0, half_day=0, absent=0, leave=0, minutes=0, today=None)
+    md = {r["id"]: r["md"] for r in bdays}
+    for e in members: e.update(present=0, half_day=0, absent=0, leave=0, minutes=0, today=None, birthday=md.get(e["id"]) or "")
+    daily = {}
     for r in rows:
         e = by[r["emp_id"]]
         key = {"P": "present", "HD": "half_day", "L": "absent", "A": "absent", "CL": "leave", "CO": "leave", "LOP": "leave"}.get(r["status"])
-        if key: e[key] += 1
+        if key:
+            e[key] += 1
+            if r["date"] <= today:
+                day = daily.setdefault(r["date"], dict(date=r["date"], present=0, half_day=0, absent=0, leave=0))
+                day[key] += 1
         if r["first_in"] and r["last_out"] and r["last_out"] != r["first_in"]:
             try: e["minutes"] += biometric.work_minutes(r["first_in"], r["last_out"])
             except ValueError: pass
@@ -577,7 +585,8 @@ def my_team(u):
     pending = [dict(r, name=by[r["emp_id"]]["name"], type="Leave" if r["kind"] == "leave" else r["kind"].replace("_", " ").title(),
                     detail="%s %s to %s (%s day)" % (r["code"], r["from_date"], r["to_date"], r["days"])) for r in reqs]
     pending += [dict(r, name=by[r["emp_id"]]["name"], type=r["kind"].title(), detail="%s %s - %s" % (r["date"], r["in_time"] or "", r["out_time"] or "")) for r in regs]
-    return jsonify(members=members, pending=pending, today=today, month=month)
+    return jsonify(members=members, pending=pending, today=today, month=month, daily=[daily[k] for k in sorted(daily)],
+                   upcoming_leave=[dict(r, name=by[r["emp_id"]]["name"]) for r in ahead])
 
 
 @app.get("/api/team/<int:eid>/attendance")
