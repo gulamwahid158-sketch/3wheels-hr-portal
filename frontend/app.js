@@ -720,8 +720,10 @@ P.executive = async el => {
       </div>`;
     }
 
-    el.innerHTML = `<h1>${esc(ME.role.toUpperCase())} Leadership Suite</h1>${tabs(NAMES, tab)}${inner}`;
+    const overview = ["ceo", "coo", "cpo"].includes(ME.role) && tab <= 2;
+    el.innerHTML = `<h1>${esc(ME.role.toUpperCase())} Leadership Suite</h1>${tabs(NAMES, tab)}${inner}${overview ? '<div id="xo"><p class="mute">Loading today\'s overview…</p></div>' : ""}`;
     wireTabs(i => { tab = i; draw(); });
+    if (overview) fillExecOverview(el.querySelector("#xo"), s);      // loads after the page is already on screen (el may have been replaced meanwhile)
 
     el.querySelectorAll("[data-hract]").forEach(b => b.onclick = async () => {
       try {
@@ -749,6 +751,64 @@ P.executive = async el => {
 
   draw();
 };
+
+// CEO / COO / CPO: today's attendance, the month by department, birthdays, new joiners and holidays (all from live records)
+async function fillExecOverview(box, summary) {
+  const today = todayIso(), ym = today.slice(0, 7);
+  let emps, day, month, hols;
+  try { [emps, day, month, hols] = await Promise.all([api("admin/employees"), api("admin/attendance?date=" + today), api("admin/attendance-overview?month=" + ym), api("holidays")]); }
+  catch (e) { if (box.isConnected) box.innerHTML = `<div class="card err">${esc(e.message)}</div>`; return; }
+  if (!box.isConnected) return;                       // another tab was opened meanwhile
+
+  const founders = ["ceo", "coo", "cpo"];             // they are not counted in attendance
+  const staff = emps.filter(e => e.active && !founders.includes(e.role) && (!e.join_date || e.join_date <= today));
+  const rec = Object.fromEntries(day.map(r => [r.emp_id, r]));
+  const isIn = e => rec[e.id] && rec[e.id].first_in;
+  const onLeave = e => rec[e.id] && ["CL", "CO", "LOP"].includes(rec[e.id].status);
+  const inList = staff.filter(isIn), leave = staff.filter(e => !isIn(e) && onLeave(e)), out = staff.filter(e => !isIn(e) && !onLeave(e));
+  const pending = summary.pending_leaves.length + summary.pending_regs.length + summary.pending_reimbursements.length + summary.pending_loans.length;
+  const pct = (a, b) => b ? Math.round(a / b * 100) : 0;
+  const bar = (v, color) => `<div style="display:flex;align-items:center;gap:8px;min-width:130px"><div style="flex:1;height:8px;border-radius:6px;background:var(--line);overflow:hidden"><i style="display:block;height:100%;width:${v}%;background:${color}"></i></div><b style="font-size:12px">${v}%</b></div>`;
+  const tile = (label, value, note, color) => `<div class="card" style="border-top:3px solid ${color}"><span class="mute">${label}</span><div class="stat">${value}</div><small class="mute">${note}</small></div>`;
+
+  const byDept = {};
+  staff.forEach(e => { const d = byDept[e.department || "Unassigned"] = byDept[e.department || "Unassigned"] || { name: e.department || "Unassigned", total: 0, in: 0 }; d.total++; if (isIn(e)) d.in++; });
+  const monthDept = {};
+  month.filter(r => !founders.includes(r.role)).forEach(r => {
+    const d = monthDept[r.department || "Unassigned"] = monthDept[r.department || "Unassigned"] || { name: r.department || "Unassigned", present: 0, half: 0, absent: 0, hours: 0, people: 0 };
+    d.present += r.present; d.half += r.half_day; d.absent += r.absent + r.leave_no_punch; d.hours += r.working_hours; d.people++;
+  });
+  const mRows = Object.values(monthDept).map(d => ({ ...d, rate: pct(d.present + d.half / 2, d.present + d.half + d.absent) })).sort((a, b) => b.rate - a.rate);
+
+  const dayMs = 86400000, t0 = new Date(today + "T00:00");
+  const birthdays = emps.filter(e => e.active && /^\d{4}-\d{2}-\d{2}$/.test(e.dob || "")).map(e => {
+    let next = new Date(t0.getFullYear(), +e.dob.slice(5, 7) - 1, +e.dob.slice(8, 10));
+    if (next < t0) next.setFullYear(next.getFullYear() + 1);
+    return { ...e, next, days: Math.round((next - t0) / dayMs) };
+  }).filter(e => e.days <= 30).sort((a, b) => a.days - b.days);
+  const joiners = emps.filter(e => e.active && e.join_date && e.join_date <= today && (t0 - new Date(e.join_date + "T00:00")) / dayMs <= 30).sort((a, b) => b.join_date.localeCompare(a.join_date));
+  const coming = hols.filter(h => h.date >= today && !/^Sunday/.test(h.name)).slice(0, 5);
+  const scroll = html => `<div style="max-height:320px;overflow:auto">${html}</div>`;
+
+  box.innerHTML = `
+    <h2 style="margin:18px 0 8px">Today at a glance - ${longDate(today)}</h2>
+    <div class="grid">
+      ${tile("Punched in today", `${inList.length} <small class="mute" style="font-size:14px">/ ${staff.length}</small>`, `${pct(inList.length, staff.length)}% of staff`, "#388e3c")}
+      ${tile("Not punched yet", out.length, "No punch on the machine so far", "#c62828")}
+      ${tile("On approved leave", leave.length, "CL / Comp Off / LOP", "#1565c0")}
+      ${tile("Waiting for approval", pending, "Leave, regularization, claims, loans", "#b8860b")}
+    </div>
+    <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(380px,1fr))">
+      <div class="card"><h2>Department-wise today</h2>${table([["Department", d => d.name], ["In / Total", d => `${d.in} / ${d.total}`], ["Present", d => bar(pct(d.in, d.total), "#388e3c"), 1]], Object.values(byDept).sort((a, b) => b.total - a.total), "No employees.")}</div>
+      <div class="card"><h2>Not punched yet (${out.length})</h2>${scroll(table([["Employee", e => e.name], ["Department", e => e.department], ["Reports to", e => e.manager_name || "-"]], out.slice().sort((a, b) => a.name.localeCompare(b.name)), "Everyone has punched in."))}</div>
+    </div>
+    <div class="card"><h2>${monthTitle(ym)} attendance by department</h2>${table([["Department", d => d.name], ["People", d => d.people], ["Present days", d => d.present], ["Half days", d => d.half], ["Absent days", d => d.absent], ["Total hours", d => Math.round(d.hours)], ["Attendance", d => bar(d.rate, d.rate >= 75 ? "#388e3c" : d.rate >= 50 ? "#b8860b" : "#c62828"), 1]], mRows, "No attendance recorded this month.")}</div>
+    <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr))">
+      <div class="card"><h2>Upcoming birthdays</h2>${scroll(table([["Name", e => e.name], ["Date", e => e.next.toLocaleDateString("en-IN", { day: "2-digit", month: "short" })], ["In", e => e.days === 0 ? "Today 🎂" : `${e.days} day(s)`]], birthdays, "No birthdays in the next 30 days."))}</div>
+      <div class="card"><h2>New joiners (30 days)</h2>${scroll(table([["Name", e => e.name], ["Designation", e => e.designation || "-"], ["Joined", e => fdate(e.join_date)]], joiners, "No one joined in the last 30 days."))}</div>
+      <div class="card"><h2>Upcoming holidays</h2>${table([["Date", h => fdate(h.date)], ["Holiday", h => h.name], ["Type", h => h.restricted ? "Optional" : "Public"]], coming, "No holidays listed.")}</div>
+    </div>`;
+}
 
 P.admin = async el => {
   const ADMINS = ADMIN_ROLES;
