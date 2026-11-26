@@ -139,9 +139,23 @@ async function regulPage(el, cfg) {
   if (cfg.crumb) setCrumb(cfg.crumb);
   const [info, mine] = await Promise.all([api("approval-info"), api("regularization")]);
   const approvers = [];
-  if (info.manager) approvers.push({ id: info.manager.id, name: info.manager.name, label: "Manager" });
-  (info.backups || []).forEach(b => approvers.push({ id: b.id, name: b.name, label: b.role.toUpperCase() }));
-  approver = approvers.length ? String(approvers[0].id) : "";
+  const isHrManager = b => b.designation === "HR Manager";
+  const backs = info.backups || [];
+  if (cfg.limitApprovers) {
+    // cfg.limitApprovers: exactly this list, in this order: CEO, COO, CPO, HR Manager, Reporting Manager
+    const byRole = r => backs.filter(b => b.role === r && !isHrManager(b));
+    [...byRole("ceo"), ...byRole("coo"), ...byRole("cpo"), ...backs.filter(isHrManager)]
+      .forEach(b => approvers.push({ id: b.id, name: b.name, label: isHrManager(b) ? "HR Manager" : b.role.toUpperCase() }));
+    if (info.manager) {
+      const same = approvers.find(a => a.id === info.manager.id);       // the manager already is the CEO / COO / CPO / HR Manager: list once
+      if (same) same.label += " / Manager"; else approvers.push({ id: info.manager.id, name: info.manager.name, label: "Manager" });
+    }
+    approver = info.manager ? String(info.manager.id) : approvers.length ? String(approvers[0].id) : "";    // the request goes to the reporting manager unless another one is picked
+  } else {
+    if (info.manager) approvers.push({ id: info.manager.id, name: info.manager.name, label: "Manager" });
+    backs.forEach(b => approvers.push({ id: b.id, name: b.name, label: b.role.toUpperCase() }));
+    approver = approvers.length ? String(approvers[0].id) : "";
+  }
   const today = todayIso();
 
   const draw = async (reload = false) => {
@@ -225,7 +239,7 @@ async function regulPage(el, cfg) {
 }
 
 P["my-regularizations"] = el => regulPage(el, {
-  kind: "regularize", crumb: ["Attendance Info", "My Regularizations"], tabs: ["Apply", "Pending", "History"], miniCal: "upper",
+  kind: "regularize", crumb: ["Attendance Info", "My Regularizations"], tabs: ["Apply", "Pending", "History"], miniCal: "upper", limitApprovers: true,
   emptyTitle: "", emptyMsg: "Select date to start regularizing", noun: "regularise", byLabel: "Regularized by", onLabel: "Regularized on",
   noteHtml: d => `You can regularise for any exception day(s) on or before <b>${d}</b>.`,
 });
