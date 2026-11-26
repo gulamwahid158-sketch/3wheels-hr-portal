@@ -29,6 +29,8 @@ HR_LIKE_ROLES = ("hr", "admin")                                  # manage people
 ADMIN_ROLES = HR_LIKE_ROLES + ("ceo", "coo", "cpo", "executive", "superadmin")
 ROLES = ("employee", "manager", "hr", "admin", "ceo", "coo", "cpo", "executive", "superadmin")
 EMP_EXTRA_FIELDS = tuple(name for name, _ in db.EMPLOYEE_EXTRA_COLUMNS)
+REG_LIMIT = 3          # regularizations (pending or approved) one person may have for the days of one month
+REG_LIMIT_MSG = "You have already used your %d regularizations for this month. Please contact your Reporting Manager or HR." % REG_LIMIT
 
 
 def send_welcome_email(to_email, name, emp_no, password, role, designation, department):
@@ -441,6 +443,9 @@ def regularize(u):
     if j["kind"] == "regularize" and not (j.get("in_time") and j.get("out_time")): raise ValueError("In and out time required")
     if q("SELECT id FROM regularizations WHERE emp_id=? AND date=? AND kind=? AND status='pending'", (u["id"], j["date"], j["kind"]), one=True):
         raise ValueError("A request for this date is already pending")
+    if j["kind"] == "regularize":
+        used = q("SELECT COUNT(*) c FROM regularizations WHERE emp_id=? AND kind='regularize' AND status IN('pending','approved') AND substr(date,1,7)=?", (u["id"], j["date"][:7]), one=True)["c"]
+        if used >= REG_LIMIT: raise ValueError(REG_LIMIT_MSG)
     approver = int(j.get("approver_id") or approver_of(u))
     rid = run("INSERT INTO regularizations(emp_id,kind,date,in_time,out_time,reason,approver_id) VALUES(?,?,?,?,?,?,?)",
               (u["id"], j["kind"], j["date"], j.get("in_time"), j.get("out_time"), j["reason"], approver))

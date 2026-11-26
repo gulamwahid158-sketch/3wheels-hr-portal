@@ -463,6 +463,17 @@ def test_biometric_live_ingest():
         os.environ.pop("BIOMETRIC_TOKEN")
 
 
+def test_regularization_limit_three_per_month():
+    a = login("aarav@example.com")
+    body = lambda day, kind="regularize": {"kind": kind, "date": day, "in_time": "10:00", "out_time": "19:00", "reason": "forgot"}
+    for day in ("2026-08-03", "2026-08-04", "2026-08-05"):
+        assert a.post("/api/regularization", json=body(day)).status_code == 200
+    r = a.post("/api/regularization", json=body("2026-08-06"))                     # the 4th in the same month is refused
+    assert r.status_code == 400 and "Reporting Manager or HR" in r.get_json()["error"]
+    assert a.post("/api/regularization", json=body("2026-07-06")).status_code == 200      # another month is counted on its own
+    assert a.post("/api/regularization", json=body("2026-08-06", "permission")).status_code == 200   # permission requests do not use the limit
+
+
 def test_designation_master_list():
     c = login("komal@example.com")
     d = c.get("/api/designations").get_json()

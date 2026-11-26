@@ -4,7 +4,8 @@
 
 const STATUS_NAME = { P: "Present", A: "Absent", CL: "Casual Leave", CO: "Comp Off", LOP: "Loss Of Pay", L: "Leave", HD: "Present / Leave", H: "Holiday", O: "Weekly Off" };
 const EXC = ["A", "L", "HD"];               // days that show a + to regularize (absent, leave without punch, half day)
-const BREAK_MIN = 45;                       // lunch break taken off the worked time
+const REG_LIMIT = 3;                        // regularizations per person per month (the server enforces the same number)
+const BREAK_MIN = 45;                      // lunch break taken off the worked time
 const LATE_GRACE = 15;                      // minutes allowed after shift start
 
 // Numbers for a set of attendance rows (up to and including the given date)
@@ -221,7 +222,15 @@ async function regulPage(el, cfg) {
     const ap = $("#rg-appr"); if (ap) ap.onchange = () => { keep(); approver = ap.value; draw(); };
     const cancel = $("#rg-cancel"); if (cancel) cancel.onclick = () => { picked = []; rows = {}; remarks = ""; draw(); };
     const submit = $("#rg-submit"); if (submit) submit.onclick = async () => {
-      keep(); submit.disabled = true;
+      keep();
+      if (kind === "regularize") {          // at most 3 regularizations (pending or approved) for the days of one month
+        const perMonth = {};
+        list.filter(r => ["pending", "approved"].includes(r.status)).forEach(r => { const m = String(r.date).slice(0, 7); perMonth[m] = (perMonth[m] || 0) + 1; });
+        picked.forEach(d => { perMonth[d.slice(0, 7)] = (perMonth[d.slice(0, 7)] || 0) + 1; });
+        const over = Object.keys(perMonth).find(m => perMonth[m] > REG_LIMIT);
+        if (over) { openDialog("Regularization limit reached", `<p>You can regularize only <b>${REG_LIMIT} days</b> in a month (${monthTitle(over)}).</p><p>Please contact your <b>Reporting Manager</b> or <b>HR</b>.</p>`); return; }
+      }
+      submit.disabled = true;
       let done = 0;
       for (const d of [...picked]) {
         const r = rows[d], reason = (r.reason || remarks || "").trim();
