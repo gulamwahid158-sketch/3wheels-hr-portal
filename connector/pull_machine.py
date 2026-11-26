@@ -102,19 +102,31 @@ def read_punches(count):
     """Reads every record, from block 0 to the end. Any failed block raises, and the next try starts again at block 0.
     Returns (punches, bad) where bad = records that made no sense and were left out."""
     blocks = (count * 12 + 1023) // 1024
-    data = b"".join(read_block(n, count, blocks) for n in range(blocks))      # the 12 byte records run on across blocks
-    out, bad = [], 0
+    parts = [read_block(n, count, blocks) for n in range(blocks)]
+    data = b"".join(parts)                                    # the 12 byte records run on across blocks
     latest = datetime.now() + timedelta(days=1)
-    for i in range(count):
-        r = data[i * 12:(i + 1) * 12]
+
+    def punch(r):
+        """(uid, time) if these 12 bytes really are a punch record, else None."""
         try:
             uid, at = decode_record(r)
-            if r[4:6] != b"\x01\x00" or not 0 < uid < 100000 or not datetime(2020, 1, 1) <= at <= latest:
-                raise ValueError("not a punch record")
         except (ValueError, IndexError):
-            bad += 1
-            continue
-        out.append((uid, at))
+            return None
+        ok = r[4:6] == b"\x01\x00" and 0 < uid < 100000 and datetime(2020, 1, 1) <= at <= latest
+        return (uid, at) if ok else None
+
+    found = [punch(data[i * 12:(i + 1) * 12]) for i in range(count)]
+    out = [p for p in found if p]
+    bad = count - len(out)
+    if bad:
+        # Blocks went missing (this happens when something else reads the machine at the same time), so the rest of the data
+        # is shifted. Each block on its own is still good: find where its records start and keep every real one.
+        have = set(out)
+        for b in parts:
+            best = max(([p for p in (punch(b[o:o + 12]) for o in range(start, len(b) - 11, 12)) if p] for start in range(12)), key=len)
+            for p in best:
+                if p not in have: have.add(p); out.append(p)
+        out.sort(key=lambda p: p[1])
     return out, bad
 
 

@@ -10,6 +10,7 @@ reference/
 
 # Biometric connector: logs and state files hold real punches, never commit them
 connector/*.log
+connector/*.log.*
 connector/pulled_*.txt
 connector/connector_queue.jsonl
 connector/connector_seen.txt
