@@ -1662,6 +1662,38 @@ def a_attendance_export(u):
             ws3.cell(row=row_idx, column=col_idx).alignment = center
     ws3.freeze_panes = "C2"
 
+    # ---- Sheet 4: First In - Last Out (for every day: who punched in first and who punched out last, with the time) ----
+    ws4 = wb.create_sheet("First In - Last Out")
+    ws4.append(["Date", "Day", "People punched", "First punch IN - who", "First punch IN - time", "Last punch OUT - who", "Last punch OUT - time"])
+    tmin = lambda t: int(t[:2]) * 60 + int(t[3:5])
+    for d in range(1, days_in_month + 1):
+        iso = "%s-%02d" % (month, d)
+        ins, outs, punched = [], [], 0
+        for r in data:
+            rec = next((x for x in r["days"] if x["date"] == iso), None)
+            if not rec or not rec["first_in"]: continue
+            punched += 1
+            ins.append((tmin(rec["first_in"]), r["name"], rec["first_in"]))
+            if rec["last_out"] and rec["last_out"] != rec["first_in"]:
+                m_out = tmin(rec["last_out"]) + (1440 if tmin(rec["last_out"]) < tmin(rec["first_in"]) else 0)       # a night shift ends after midnight
+                outs.append((m_out, r["name"], rec["last_out"] + (" (next day)" if m_out >= 1440 else "")))
+        if not punched: continue                                  # Sundays, holidays and days that have not happened yet
+        first = [x for x in ins if x[0] == min(i[0] for i in ins)]
+        last = [x for x in outs if x[0] == max(o[0] for o in outs)] if outs else []
+        ws4.append([date(yy, mm, d), date(yy, mm, d).strftime("%a"), punched, ", ".join(x[1] for x in first), first[0][2],
+                    ", ".join(x[1] for x in last) if last else "-", last[0][2] if last else "-"])
+    for cell in ws4[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = center
+        cell.border = border
+    for i, w in enumerate([13, 8, 16, 32, 20, 32, 22], 1): ws4.column_dimensions[get_column_letter(i)].width = w
+    for row in ws4.iter_rows(min_row=2):
+        row[0].number_format = "DD MMM YYYY"
+        for c in row: c.border = border
+        for c in (row[1], row[2], row[4], row[6]): c.alignment = center
+    ws4.freeze_panes = "A2"
+
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
