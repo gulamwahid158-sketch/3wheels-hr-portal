@@ -421,10 +421,11 @@ def attendance(u):
     avg_out = sum(mins(r["last_out"]) for r in work) / len(work) if work else 0
     avg_work = sum(biometric.work_minutes(r["first_in"], r["last_out"]) for r in work) / len(work) if work else 0  # night shifts end after midnight
     fmt = lambda x: "%02d:%02d" % divmod(int(x), 60)
-    shift_start = mins(u["shift"].split("-")[0])
+    sm = re.match(r"^(\d{1,2}):(\d{2})-", u["shift"] or "")      # "Flexible" has no start time, so nobody is late
+    shift_start = int(sm.group(1)) * 60 + int(sm.group(2)) if sm else None
     summary = dict(present=len(work), absent=sum(r["status"] == "A" for r in rows), leave=sum(r["status"] in ("CL", "L", "CO") for r in rows),
                    half_day=sum(r["status"] == "HD" for r in rows),
-                   holidays=sum(r["status"] == "H" for r in rows), late_in=sum(mins(r["first_in"]) > shift_start + 15 for r in work),
+                   holidays=sum(r["status"] == "H" for r in rows), late_in=sum(mins(r["first_in"]) > shift_start + 15 for r in work) if shift_start is not None else 0,
                    avg_first_in=fmt(avg_in) if work else "-", avg_last_out=fmt(avg_out) if work else "-",
                    avg_work_hrs=("%.2f" % (avg_work / 60)) if work else "-")
     exc = [r["date"] for r in rows if r["status"] in ("A", "L", "HD")]      # days that can be regularized
@@ -1117,7 +1118,7 @@ def a_emp_add(u):
         emp_no, j["name"].strip(), email, generate_password_hash(j["password"]),
         role, j["department"], j["designation"], j.get("location") or "", mgr,
         j["join_date"], j.get("dob") or "", j.get("skills") or "",
-        j.get("shift") or "11:00-20:00", bio,
+        j.get("shift") or "Flexible", bio,
     ] + [extras[f] for f in EMP_EXTRA_FIELDS]
     eid = run(
         "INSERT INTO employees(%s) VALUES(%s)" % (
@@ -1636,6 +1637,31 @@ def a_attendance_export(u):
         code_cell.alignment = center
         ws2.cell(row=legend_row, column=3 + idx * 2, value=label)
 
+    # ---- Sheet 3: Daily (the in and out time of every day, written "HH:MM-HH:MM"; one punch so far shows just that time) ----
+    ws3 = wb.create_sheet("Daily")
+    ws3.append(["Employee ID", "Name"] + date_labels)
+    for r in data:
+        by_date = {x["date"]: x for x in r["days"]}
+        row = [r["emp_no"], r["name"]]
+        for d in range(1, days_in_month + 1):
+            rec = by_date.get("%s-%02d" % (month, d))
+            fi = rec["first_in"] if rec else None
+            lo = rec["last_out"] if rec else None
+            row.append(None if not fi else fi if (not lo or lo == fi) else "%s-%s" % (fi, lo))
+        ws3.append(row)
+    for cell in ws3[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = center
+        cell.border = border
+    ws3.column_dimensions["A"].width = 14
+    ws3.column_dimensions["B"].width = 24
+    for col_idx in range(3, 3 + days_in_month):
+        ws3.column_dimensions[get_column_letter(col_idx)].width = 12
+        for row_idx in range(2, len(data) + 2):
+            ws3.cell(row=row_idx, column=col_idx).alignment = center
+    ws3.freeze_panes = "C2"
+
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -1735,9 +1761,10 @@ def a_attendance_mark(u):
     fi = j.get("first_in")
     lo = j.get("last_out")
     if st == "P":
-        shift_parts = (target["shift"] or "10:00-19:00").split("-")
+        sh = target["shift"] if re.match(r"^\d{1,2}:\d{2}-\d{1,2}:\d{2}$", target["shift"] or "") else "10:00-19:00"      # Flexible: use a normal day
+        shift_parts = sh.split("-")
         if not fi: fi = shift_parts[0]
-        if not lo: lo = shift_parts[1] if len(shift_parts) > 1 else "19:00"
+        if not lo: lo = shift_parts[1]
     else:
         fi, lo = None, None
     run("REPLACE INTO attendance(emp_id, date, status, first_in, last_out) VALUES (?, ?, ?, ?, ?)",

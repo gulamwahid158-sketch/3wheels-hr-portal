@@ -757,7 +757,7 @@ P.admin = async el => {
           ${emps.map(e => `<option value="${e.id}" ${e.id === editId ? "selected" : ""}>${esc(e.emp_no)} — ${esc(e.name)} (${esc(e.designation || "-")})</option>`).join("")}
         </select>
       </div>`;
-      const shiftOpts = [["11:00-20:00", "11:00-20:00"], ["09:00-18:00", "09:00-18:00"], ["10:00-19:00", "10:00-19:00"], ["Flexible", "Flexible"]];
+      const shiftOpts = [["Flexible", "Flexible"]];      // the only shift: working time is judged from the punches (9 hours full day, 4.5 hours half day)
       const addFields = [
         { type: "section", label: "Account & Work Details" },
         { n: "name", label: "Full name" },
