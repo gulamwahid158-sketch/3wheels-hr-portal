@@ -900,7 +900,7 @@ P.admin = async el => {
           ${table([
             ["ID", r => r.emp_no],
             ["Machine ID", r => r.biometric_id ? esc(r.biometric_id) : "-"],
-            ["Name", r => `<b>${esc(r.name)}</b>`, 1],
+            ["Name", r => `<a href="#" class="emp-att" data-empatt="${r.id}" title="Attendance of ${esc(r.name)}"><b>${esc(r.name)}</b></a>`, 1],
             ["Designation", r => esc(r.designation || "-")],
             ["Dept", r => r.department],
             ["Role", r => badge(r.role), 1],
@@ -923,6 +923,7 @@ P.admin = async el => {
       inner = viewBar + body;
       // Stored for the post-render wiring below.
       draw._desigDeptMap = deptByDesig;
+      draw._emps = emps;
       draw._editingEmp = editing;
     }
     if (tab === 2) {
@@ -1277,6 +1278,11 @@ P.admin = async el => {
       draw._empEditId = empPick.value ? +empPick.value : null;
       draw();
     };
+    el.querySelectorAll("[data-empatt]").forEach(a => a.onclick = e => {      // click a name: that person's attendance, month by month
+      e.preventDefault();
+      const emp = (draw._emps || []).find(x => x.id === +a.dataset.empatt);
+      if (emp) showEmpAttendance(emp);
+    });
     el.querySelectorAll("[data-empedit]").forEach(b => b.onclick = () => {
       draw._empView = "edit";
       draw._empEditId = +b.dataset.empedit;
@@ -1440,6 +1446,36 @@ P.admin = async el => {
   };
   draw();
 };
+
+// HR Admin > Employees: one person's attendance for any month (calendar, totals and a day by day table)
+async function showEmpAttendance(emp) {
+  let ym = localYm();
+  const body = openDialog(`Attendance - ${emp.name} (${emp.emp_no})`, `<p class="mute">Loading…</p>`, { wide: true });
+  const draw = async () => {
+    let rows;
+    try { rows = await api("admin/attendance-overview?month=" + ym + "&emp_id=" + emp.id); }
+    catch (e) { body.innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
+    const by = Object.fromEntries(rows.map(r => [r.date, r]));
+    const n = (...st) => rows.filter(r => st.includes(r.status)).length;
+    const hrs = rows.reduce((a, r) => { const m = r.first_in && r.last_out && r.last_out !== r.first_in ? workMins(r.first_in, r.last_out) : 0; return a + (m > 0 ? m : 0); }, 0);
+    const cell = c => {
+      const d = by[c.iso], s = d && !c.out ? d.status : "";
+      const st = s === "HD" ? '<b class="ac-st"><i>P</i><i>L</i></b>' : s ? `<b class="ac-st">${esc(s)}</b>` : "";
+      return `<div class="ac ${c.out ? "out" : ""} ${s ? "s-" + s : ""} ${c.iso === todayIso() ? "today" : ""}"><span class="ac-n">${pad2(c.day)}</span>${st}</div>`;
+    };
+    const timeOf = r => r.first_in ? (r.last_out && r.last_out !== r.first_in ? `${esc(r.first_in)} - ${esc(r.last_out)}` : esc(r.first_in)) : "-";
+    const hoursOf = r => { const m = r.first_in && r.last_out && r.last_out !== r.first_in ? workMins(r.first_in, r.last_out) : 0; return m > 0 ? hhmm(m) : "-"; };
+    const chips = [["Present", n("P"), "#388e3c"], ["Half Day (P | L)", n("HD"), "#b8860b"], ["Leave (L)", n("L"), "#d32f2f"], ["CL / CO / LOP", n("CL", "CO", "LOP"), "#1565c0"], ["Absent", n("A"), "#c62828"], ["Holiday / Off", n("H", "O"), "#546e7a"], ["Total hours", hhmm(hrs), "#1f4e78"]];
+    body.innerHTML = `<div class="cal-nav"><button type="button" id="ea-prev">‹ Prev</button><span style="display:flex;align-items:center;gap:10px"><b>${monthTitle(ym)}</b><input type="month" id="ea-month" value="${ym}" style="width:170px;padding:4px 8px" aria-label="Pick a month"></span><button type="button" id="ea-next">Next ›</button></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">${chips.map(c => `<span style="padding:4px 10px;border-radius:14px;border:1px solid ${c[2]};color:${c[2]};font-size:12px;font-weight:600">${c[0]}: ${c[1]}</span>`).join("")}</div>
+      <div class="ac-head">${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(x => `<div>${x}</div>`).join("")}</div><div class="ac-grid">${monthGrid(ym).map(cell).join("")}</div>
+      <div style="margin-top:14px">${table([["Date", r => fdate(r.date)], ["Day", r => weekdayOf(r.date)], ["Status", r => statusBadge(r.status), 1], ["In - Out", timeOf], ["Hours", hoursOf]], rows, "No attendance recorded for this month.")}</div>`;
+    $("#ea-prev").onclick = () => { ym = addMonths(ym, -1); draw(); };
+    $("#ea-next").onclick = () => { ym = addMonths(ym, 1); draw(); };
+    $("#ea-month").onchange = e => { if (e.target.value) { ym = e.target.value; draw(); } };
+  };
+  await draw();
+}
 
 function bindSide(route) {
   document.querySelectorAll(".grp").forEach(b => b.onclick = e => {
