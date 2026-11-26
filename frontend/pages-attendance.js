@@ -53,6 +53,8 @@ P.attendance = async el => {
 
   const draw = async () => {
     const [cur, prev] = await Promise.all([api("attendance?month=" + ym), api("attendance?month=" + addMonths(ym, -1))]);
+    // One punch so far: the server stores it as both in and out. Show it as First In only; Last Out (and the hours) appear with the next punch.
+    [cur, prev].forEach(m => m.days.forEach(d => { if (d.last_out && d.last_out === d.first_in) d.last_out = null; }));
     const today = todayIso(), byDate = Object.fromEntries(cur.days.map(d => [d.date, d]));
     const st = attStats(cur.days, cur.shift, today), pst = attStats(prev.days, prev.shift, "9999-99-99"), sh = st.sh;
     if (sel.slice(0, 7) !== ym) sel = ym === today.slice(0, 7) ? today : ym + "-01";
