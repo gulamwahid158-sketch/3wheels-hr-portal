@@ -83,7 +83,7 @@ def work_minutes(first_in, last_out):
 
 
 # How a finished day is judged from its first and last punch (the machine has no in/out, so hours between them decide).
-FULL_DAY_MIN = 6 * 60      # at least this long between first and last punch = Present
+FULL_DAY_MIN = 9 * 60      # at least this long between first and last punch (the 9 hour working day) = Present
 HALF_DAY_MIN = 3 * 60      # at least this long (but less than a full day) = Half Day; anything shorter, or one punch only = Leave
 
 

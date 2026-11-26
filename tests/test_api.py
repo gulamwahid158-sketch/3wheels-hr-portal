@@ -48,7 +48,8 @@ def test_regularization_and_attendance():
 
 def test_no_punch_half_day_and_regularize_from_exception():
     import biometric
-    assert [biometric.classify(a, b) for a, b in (("10:00", "19:00"), ("10:00", "14:30"), ("11:00", "11:00"), ("10:00", "12:59"), ("20:10", "05:02"))] == ["P", "HD", "L", "L", "P"]
+    # the working day is 9 hours: 9 h or more = Present, 3 to 9 h = Half Day, under 3 h or one punch = Leave
+    assert [biometric.classify(a, b) for a, b in (("10:00", "19:00"), ("10:00", "14:30"), ("11:00", "11:00"), ("10:00", "12:59"), ("20:10", "05:02"), ("10:00", "18:59"), ("20:00", "05:00"))] == ["P", "HD", "L", "L", "HD", "HD", "P"]
     ceo = login("ceo@example.com")
     nia = ceo.post("/api/admin/employees", json={"department": "Technical", "designation": "AI Engineer", "join_date": "2026-05-18", "password": "longenough1",
                    "role": "employee", "name": "Nia Noon", "email": "nia@example.com", "biometric_id": "8801"}).get_json()["id"]

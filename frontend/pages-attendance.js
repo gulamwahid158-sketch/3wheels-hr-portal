@@ -65,7 +65,7 @@ P.attendance = async el => {
     const cell = c => {
       const d = byDate[c.iso], s = d && !c.out ? d.status : "";
       return `<div class="ac ${c.out ? "out" : ""} ${s ? "s-" + s : ""} ${c.iso === today ? "today" : ""} ${c.iso === sel && !c.out ? "sel" : ""}" data-d="${c.iso}" ${c.out ? "" : 'tabindex="0"'}>
-        <span class="ac-n">${pad2(c.day)}</span>${s ? `<b class="ac-st">${esc(s)}</b>` : ""}${c.out ? "" : `<small class="ac-sh">${esc(sh.code)}</small>`}${!c.out && flagged(d) ? '<i class="ac-flag" title="Late in"></i>' : ""}</div>`;
+        <span class="ac-n">${pad2(c.day)}</span>${s === "HD" ? '<b class="ac-st"><i>P</i><i>L</i></b>' : s ? `<b class="ac-st">${esc(s)}</b>` : ""}${c.out ? "" : `<small class="ac-sh">${esc(sh.code)}</small>`}${!c.out && flagged(d) ? '<i class="ac-flag" title="Late in"></i>' : ""}</div>`;
     };
     const grid = view === "grid"
       ? `<div class="ac-head">${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(x => `<div>${x}</div>`).join("")}</div><div class="ac-grid">${monthGrid(ym).map(cell).join("")}</div>`
