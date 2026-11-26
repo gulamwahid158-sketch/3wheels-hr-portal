@@ -31,6 +31,8 @@ async function bootMe() { if (!tabAuthed()) { ME = null; return; } await refresh
 function toast(m) { const t = $("#toast"); t.textContent = m; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 2600); }
 const titleCase = s => String(s || "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 const badge = s => `<span class="badge ${esc(s)}">${esc(titleCase(s))}</span>`;
+// A half day is never written "HD": it reads P on one side and L on the other (present for one half, leave for the other)
+const statusBadge = s => s === "HD" ? `<span class="badge HD">P | L</span>` : badge(s);
 function table(cols, rows, empty = "Nothing here yet.") {
   if (!rows.length) return `<p class="mute">${esc(empty)}</p>`;
   return `<div class="tablewrap"><table><thead><tr>${cols.map(c => `<th>${esc(c[0])}</th>`).join("")}</tr></thead><tbody>${rows.map(r => `<tr>${cols.map(c => `<td>${c[2] ? c[1](r) : esc(c[1](r))}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
@@ -962,7 +964,7 @@ P.admin = async el => {
           ["Emp ID", r => r.emp_no],
           ["Employee", r => `<b>${esc(r.emp_name)}</b><br><small class="mute">${esc(r.designation || "")}</small>`, 1],
           ["Date", r => fdate(r.date)],
-          ["Status", r => badge(r.status), 1],
+          ["Status", r => statusBadge(r.status), 1],
           ["In Time", r => r.first_in || "-"],
           ["Out Time", r => r.last_out || "-"],
           ["Quick HR Actions", r => `
@@ -1123,7 +1125,7 @@ P.admin = async el => {
       if (selEmpId) {
         const detail = await api("admin/attendance-overview?month=" + aoMonth + "&emp_id=" + selEmpId);
         const selEmp = overview.find(e => e.emp_id === selEmpId);
-        const statusLabel = { P: "Present", A: "Absent", CL: "Casual Leave", CO: "Comp Off", LOP: "Loss of Pay", H: "Holiday", O: "Weekly Off", L: "Leave (no punch)", HD: "Half Day" };
+        const statusLabel = { P: "Present", A: "Absent", CL: "Casual Leave", CO: "Comp Off", LOP: "Loss of Pay", H: "Holiday", O: "Weekly Off", L: "Leave (no punch)", HD: "Present / Leave" };
         const statusColor = { P: "#388e3c", A: "#c62828", CL: "#1565c0", CO: "#6a1b9a", LOP: "#b71c1c", H: "#e65100", O: "#546e7a", L: "#8e3a9d", HD: "#b8860b" };
         drillHtml = `
         <div class="card" style="border-left:4px solid var(--brand);margin-top:16px">
@@ -1135,7 +1137,7 @@ P.admin = async el => {
             ["Date", r => fdate(r.date)],
             ["Status", r => {
               const color = statusColor[r.status] || "#555";
-              return `<span style="display:inline-block;padding:3px 10px;border-radius:12px;background:${color};color:#fff;font-weight:700;font-size:12px">${esc(r.status)}</span> <span class="mute">${statusLabel[r.status] || r.status}</span>`;
+              return `<span style="display:inline-block;padding:3px 10px;border-radius:12px;background:${color};color:#fff;font-weight:700;font-size:12px">${r.status === "HD" ? "P | L" : esc(r.status)}</span> <span class="mute">${statusLabel[r.status] || r.status}</span>`;
             }, 1],
             ["In Time", r => r.first_in || "—"],
             ["Out Time", r => r.last_out || "—"],

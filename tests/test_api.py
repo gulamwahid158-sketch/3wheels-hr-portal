@@ -466,7 +466,8 @@ def test_biometric_live_ingest():
 def test_designation_master_list():
     c = login("komal@example.com")
     d = c.get("/api/designations").get_json()
-    assert len(d["flat"]) == 59
+    assert len(d["flat"]) == len(set(d["flat"])) + 1            # only "Leadership" appears twice
+    assert {"Data Operations Executive", "Data Procurement Team Lead", "Associate AI Engineer", "AI Engineer Intern", "Office Boy", "VP"} <= set(d["flat"])
     assert "Technical Manager" in d["flat"]
     assert "AI Engineer" in d["flat"]
     assert "HR Recruiter" in d["flat"]

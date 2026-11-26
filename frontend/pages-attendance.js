@@ -2,7 +2,7 @@
 // Attendance pages in the greytHR style:
 //   Attendance Info, My Regularizations (regularize a day), Regularization & Permission (ask for permission)
 
-const STATUS_NAME = { P: "Present", A: "Absent", CL: "Casual Leave", CO: "Comp Off", LOP: "Loss Of Pay", L: "Leave", HD: "Half Day", H: "Holiday", O: "Weekly Off" };
+const STATUS_NAME = { P: "Present", A: "Absent", CL: "Casual Leave", CO: "Comp Off", LOP: "Loss Of Pay", L: "Leave", HD: "Present / Leave", H: "Holiday", O: "Weekly Off" };
 const EXC = ["A", "L", "HD"];               // days that show a + to regularize (absent, leave without punch, half day)
 const BREAK_MIN = 45;                       // lunch break taken off the worked time
 const LATE_GRACE = 15;                      // minutes allowed after shift start
@@ -69,7 +69,7 @@ P.attendance = async el => {
     };
     const grid = view === "grid"
       ? `<div class="ac-head">${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(x => `<div>${x}</div>`).join("")}</div><div class="ac-grid">${monthGrid(ym).map(cell).join("")}</div>`
-      : `<div class="tablewrap">${table([["Date", r => longDate(r.date)], ["Day", r => weekdayOf(r.date)], ["Status", r => badge(r.status), 1], ["First In", r => r.first_in || "-"], ["Last Out", r => r.last_out || "-"], ["Work Hrs", r => r.first_in && r.last_out ? hhmm(workMins(r.first_in, r.last_out)) : "-"]], cur.days, "No attendance recorded for this month.")}</div>`;
+      : `<div class="tablewrap">${table([["Date", r => longDate(r.date)], ["Day", r => weekdayOf(r.date)], ["Status", r => statusBadge(r.status), 1], ["First In", r => r.first_in || "-"], ["Last Out", r => r.last_out || "-"], ["Work Hrs", r => r.first_in && r.last_out ? hhmm(workMins(r.first_in, r.last_out)) : "-"]], cur.days, "No attendance recorded for this month.")}</div>`;
 
     // the chosen day
     const r = byDate[sel], inM = r && r.first_in ? timeMins(r.first_in) : null, outM = r && r.last_out ? timeMins(r.last_out) : null;
@@ -82,7 +82,7 @@ P.attendance = async el => {
     const range = x => x ? `${hhmm(x[0])} - ${hhmm(x[1])}` : "-";
     // a half day shows one session as Present and the other as Half Day (the one the person was not there for)
     const cameLate = inM != null && s2 && inM >= s2[0] - 30;
-    const sessionStatus = n => !r ? "-" : r.status === "HD" ? ((n === 2) === cameLate ? "Present" : "Half Day") : r.status === "P" ? "Present" : (STATUS_NAME[r.status] || r.status);
+    const sessionStatus = n => !r ? "-" : r.status === "HD" ? ((n === 2) === cameLate ? "Present" : "Leave") : r.status === "P" ? "Present" : (STATUS_NAME[r.status] || r.status);
 
     el.innerHTML = `<div class="att">
       <div class="att-top"><button class="btn" type="button" id="to-reg">My Regularizations</button></div>
