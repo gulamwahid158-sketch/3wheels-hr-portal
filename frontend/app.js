@@ -553,9 +553,23 @@ P["my-info"] = async el => {
   <div class="card"><h2>Other</h2><a href="#/resignation">Resignation</a></div>`;
   $("#cp-open").onclick = changePasswordDialog;
 };
+// An eye button inside a password box: press to see what is typed, press again to hide it
+const EYE = '<path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>';
+function addEye(input) {
+  const b = document.createElement("button");
+  const paint = () => {
+    const shown = input.type === "text";
+    b.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${EYE}${shown ? '<path d="M4 4l16 16"/>' : ""}</svg>`;
+    b.setAttribute("aria-label", shown ? "Hide password" : "Show password"); b.title = shown ? "Hide password" : "Show password";
+  };
+  b.type = "button"; b.className = "pw-toggle pw-eye";
+  b.onclick = () => { input.type = input.type === "password" ? "text" : "password"; paint(); input.focus(); };
+  input.parentElement.classList.add("pw-wrap"); input.parentElement.appendChild(b); paint();
+}
 function changePasswordDialog() {
   openDialog("Change Password", form("cp", [{ n: "current_password", label: "Current password", type: "password" }, { n: "new_password", label: "New password (min 8 characters)", type: "password" }, { n: "confirm_password", label: "Type the new password again", type: "password" }], "Change password"));
   const cp = $("#cp");
+  cp.querySelectorAll('input[type="password"]').forEach(addEye);
   $("#cp-current_password").focus();
   cp.onsubmit = async e => {
     e.preventDefault();
