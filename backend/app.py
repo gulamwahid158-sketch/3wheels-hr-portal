@@ -6,6 +6,7 @@ from email.mime.multipart import MIMEMultipart
 from datetime import date, timedelta, datetime
 from flask import Flask, request, jsonify, session, send_from_directory, send_file
 from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.utils import secure_filename
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -166,6 +167,18 @@ def db_unavailable(e):
 
 
 @app.after_request
+def security_headers(resp):
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")                          # no other site may show the portal in a frame
+    resp.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'; object-src 'none'; base-uri 'self'")
+    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    resp.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if PORTAL_URL.startswith("https://"): resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+    if request.path.startswith("/api/"): resp.headers.setdefault("Cache-Control", "no-store")      # personal data is not kept by browsers or proxies
+    return resp
+
+
+@app.after_request
 def cache_static(resp):
     if request.path.endswith((".js", ".css")) and resp.status_code == 200: resp.headers["Cache-Control"] = "public, max-age=300"
     return resp
@@ -183,6 +196,16 @@ def approver_of(u):
     if ceo: return ceo["id"]
     hr = q("SELECT id FROM employees WHERE role='hr' AND active=1 AND id!=? LIMIT 1", (u["id"],), one=True)
     return hr["id"] if hr else u["id"]
+
+
+def chosen_approver(u, j):
+    """The approver sent by the page, accepted only if it is the reporting manager, HR or leadership (never oneself or any colleague)."""
+    if not j.get("approver_id"): return approver_of(u)
+    aid = int(j["approver_id"])
+    row = q("SELECT role FROM employees WHERE id=? AND active=1", (aid,), one=True)
+    if row and aid != u["id"] and (aid == u["manager_id"] or row["role"] in HR_LIKE_ROLES + ("ceo", "coo", "cpo", "executive")):
+        return aid
+    raise ValueError("Choose your Reporting Manager, HR or leadership as the approver")
 
 
 def notify(emp_id, text):
@@ -231,18 +254,56 @@ def balances(emp_id):
 
 
 # ---------- auth ----------
+_FAILS = {}                      # key -> times of recent wrong passwords (per server process)
+FAIL_WINDOW = 600                # seconds
+FAIL_LIMITS = (8, 30)            # wrong tries allowed per window: from one address for one email, and for one email from anywhere
+
+
+def _login_keys(email): return ((request.remote_addr, email), email)
+
+
+def _too_many(email):
+    now = time.monotonic()
+    for key, limit in zip(_login_keys(email), FAIL_LIMITS):
+        recent = [t for t in _FAILS.get(key, []) if now - t < FAIL_WINDOW]
+        if recent: _FAILS[key] = recent
+        else: _FAILS.pop(key, None)
+        if len(recent) >= limit: return True
+    return False
+
+
 @app.post("/api/login")
 def login():
     j = body("email", "password")
-    u = q("SELECT * FROM employees WHERE email=? AND active=1", (j["email"].strip().lower(),), one=True)
-    if not u or not check_password_hash(u["password_hash"], j["password"]):
+    email = str(j["email"]).strip().lower()
+    if _too_many(email):
+        return jsonify(error="Too many wrong attempts. Please wait 10 minutes and try again, or contact HR."), 429
+    u = q("SELECT * FROM employees WHERE email=? AND active=1", (email,), one=True)
+    if not u or not check_password_hash(u["password_hash"], str(j["password"])):
+        if len(_FAILS) > 5000: _FAILS.clear()               # cannot grow without end
+        for key in _login_keys(email): _FAILS.setdefault(key, []).append(time.monotonic())
         return jsonify(error="Invalid email or password"), 401
+    for key in _login_keys(email): _FAILS.pop(key, None)
+    session.clear()
     session["uid"] = u["id"]
     return jsonify(ok=True)
 
 
 @app.post("/api/logout")
 def logout(): session.clear(); return jsonify(ok=True)
+
+
+@app.post("/api/me/password")
+@auth()
+def change_my_password(u):
+    """Anyone signed in can change their own password; the current one must be given."""
+    j = body("current_password", "new_password")
+    cur, new = str(j["current_password"]), str(j["new_password"])
+    if not check_password_hash(u["password_hash"], cur): raise ValueError("Current password is wrong")
+    if len(new) < 8: raise ValueError("New password must be at least 8 characters")
+    if new == cur: raise ValueError("New password must be different from the current one")
+    run("UPDATE employees SET password_hash=? WHERE id=?", (generate_password_hash(new), u["id"]))
+    return jsonify(ok=True)
 
 
 @app.get("/api/me")
@@ -334,7 +395,7 @@ def leave_apply(u):
     if j["code"] != "LOP":
         bal = next(b for b in balances(u["id"]) if b["code"] == j["code"])["balance"]
         if days > bal: raise ValueError("Insufficient %s balance (%.1f available, %.1f requested)" % (t["name"], bal, days))
-    approver = int(j.get("approver_id") or approver_of(u))
+    approver = chosen_approver(u, j)
     rid = run("INSERT INTO requests(emp_id,kind,code,from_date,to_date,from_session,to_session,days,reason,approver_id,contact) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
               (u["id"], "leave", j["code"], j["from_date"], j["to_date"], fs, ts, days, j["reason"], approver, str(j.get("contact") or "").strip()[:120] or None))
     if u["role"] == "superadmin":
@@ -359,7 +420,7 @@ def rh_apply(u):
     if q("SELECT COUNT(*) c FROM requests WHERE emp_id=? AND kind='rh' AND status IN('pending','approved')", (u["id"],), one=True)["c"] >= 2:
         raise ValueError("Restricted holiday limit (2) reached")
     rid = run("INSERT INTO requests(emp_id,kind,code,from_date,to_date,days,reason,approver_id) VALUES(?,?,?,?,?,?,?,?)",
-              (u["id"], "rh", "RH", j["date"], j["date"], 0, j["reason"], int(j.get("approver_id") or approver_of(u))))
+              (u["id"], "rh", "RH", j["date"], j["date"], 0, j["reason"], chosen_approver(u, j)))
     return jsonify(id=rid)
 
 
@@ -371,7 +432,7 @@ def compoff_grant(u):
     if not a or a["status"] not in ("O", "H") or not a["first_in"]:
         raise ValueError("Comp-off needs work recorded on an off day or holiday")
     rid = run("INSERT INTO requests(emp_id,kind,code,from_date,to_date,days,reason,approver_id) VALUES(?,?,?,?,?,?,?,?)",
-              (u["id"], "compoff_grant", "CO", j["date"], j["date"], 1, j["reason"], int(j.get("approver_id") or approver_of(u))))
+              (u["id"], "compoff_grant", "CO", j["date"], j["date"], 1, j["reason"], chosen_approver(u, j)))
     return jsonify(id=rid)
 
 
@@ -388,7 +449,7 @@ def leave_cancel(u):
     if q("SELECT id FROM requests WHERE kind='cancel' AND ref_id=? AND status='pending'", (r["id"],), one=True):
         raise ValueError("Cancellation already requested")
     rid = run("INSERT INTO requests(emp_id,kind,code,from_date,to_date,days,reason,ref_id,approver_id) VALUES(?,?,?,?,?,?,?,?,?)",
-              (u["id"], "cancel", r["code"], r["from_date"], r["to_date"], r["days"], j["reason"], r["id"], int(j.get("approver_id") or approver_of(u))))
+              (u["id"], "cancel", r["code"], r["from_date"], r["to_date"], r["days"], j["reason"], r["id"], chosen_approver(u, j)))
     return jsonify(id=rid, status="pending")
 
 
@@ -446,7 +507,7 @@ def regularize(u):
     if j["kind"] == "regularize":
         used = q("SELECT COUNT(*) c FROM regularizations WHERE emp_id=? AND kind='regularize' AND status IN('pending','approved') AND substr(date,1,7)=?", (u["id"], j["date"][:7]), one=True)["c"]
         if used >= REG_LIMIT: raise ValueError(REG_LIMIT_MSG)
-    approver = int(j.get("approver_id") or approver_of(u))
+    approver = chosen_approver(u, j)
     rid = run("INSERT INTO regularizations(emp_id,kind,date,in_time,out_time,reason,approver_id) VALUES(?,?,?,?,?,?,?)",
               (u["id"], j["kind"], j["date"], j.get("in_time"), j.get("out_time"), j["reason"], approver))
     notify(approver, "%s requested %s for %s" % (u["name"], j["kind"], j["date"]))
@@ -503,7 +564,9 @@ def payslip_requests_send(u, rid):
     f = request.files.get("file")
     path = None
     if f and f.filename:
-        path = _os.path.join(UPLOAD_DIR, "%d_%s" % (rid, f.filename))
+        fname = secure_filename(f.filename)                 # no folders or odd characters from the browser
+        if not fname.lower().endswith((".pdf", ".png", ".jpg", ".jpeg")): raise ValueError("Attach a PDF or an image")
+        path = _os.path.join(UPLOAD_DIR, "%d_%s" % (rid, fname))
         f.save(path)
     run("UPDATE payslip_requests SET status='sent', file_path=? WHERE id=?", (path, rid))
     notify(pr["emp_id"], "Your payslip for %s is ready to download." % pr["month"])
@@ -552,6 +615,15 @@ def it_statement(u):
     return jsonify(gross=gross["g"], tax_deducted=gross["t"], declarations=dec)
 
 
+def notify_resignation(u, last_day):
+    """A new resignation rings the bell of the Reporting Manager, the HR Manager, the CEO, COO and CPO (each once, never the person)."""
+    ids = {r["id"] for r in q("SELECT id FROM employees WHERE active=1 AND (designation='HR Manager' OR role IN ('ceo','coo','cpo'))")}
+    if u["manager_id"] and q("SELECT id FROM employees WHERE id=? AND active=1", (u["manager_id"],), one=True): ids.add(u["manager_id"])
+    ids.discard(u["id"])
+    for i in sorted(ids):
+        notify(i, "%s (%s) has submitted a resignation. Proposed last working day: %s" % (u["name"], u["emp_no"], last_day))
+
+
 def simple_resource(path, table, fields, required, extra_status=None):
     def lst(u):
         return jsonify(q("SELECT * FROM %s WHERE emp_id=? ORDER BY id DESC" % table, (u["id"],)))
@@ -564,6 +636,7 @@ def simple_resource(path, table, fields, required, extra_status=None):
         for f in ("amount", "tenure_months"):
             if f in fields and float(j.get(f) or 0) <= 0: raise ValueError("%s must be positive" % f)
         rid = run("INSERT INTO %s(%s) VALUES(%s)" % (table, ",".join(cols), ",".join("?" * len(cols))), vals)
+        if table == "resignations": notify_resignation(u, j["last_day"])
         return jsonify(id=rid)
     app.add_url_rule("/api/" + path, "list_" + path, auth()(lst), methods=["GET"])
     app.add_url_rule("/api/" + path, "add_" + path, auth()(add), methods=["POST"])
@@ -738,6 +811,8 @@ def react(u):
 def post_feed(u):
     j = body("body")
     t = j.get("type", "post")
+    if t not in ("post", "poll"): raise ValueError("Invalid type")
+    if t == "post" and u["role"] not in ADMIN_ROLES: return jsonify(error="Only HR and leadership can create posts"), 403
     opts = None
     if t == "poll":
         o = [x.strip() for x in j.get("options", []) if x.strip()]
@@ -2230,29 +2305,6 @@ def exec_summary(u):
         locations=locations
     )
 
-
-@app.post("/api/attendance/punch")
-@auth()
-def attendance_punch(u):
-    j = body("emp_id", "date", "status")
-    run("INSERT INTO attendance(emp_id, date, status) VALUES(?,?,?)", (int(j["emp_id"]), j["date"], j["status"]))
-    return jsonify(ok=True)
-
-@app.post("/api/device/push")
-def device_push():
-    data = request.get_json(silent=True) or {}
-    # Log raw payload for protocol analysis
-    import logging
-    logging.info("DEVICE PUSH: %s", data)
-    # realtime_glog contains base64 attendance block
-    if data.get("request_code") == "realtime_glog":
-        try:
-            import base64
-            blk = base64.b64decode(data.get("block", ""))
-            logging.info("GLOG BLOCK: %s", blk)
-        except Exception as e:
-            logging.warning("glog decode failed: %s", e)
-    return jsonify(ok=True)
 
 @app.get("/api/health")
 def health():

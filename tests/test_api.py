@@ -474,6 +474,48 @@ def test_regularization_limit_three_per_month():
     assert a.post("/api/regularization", json=body("2026-08-06", "permission")).status_code == 200   # permission requests do not use the limit
 
 
+def test_change_own_password():
+    c = login("isha@example.com")
+    change = lambda cur, new: c.post("/api/me/password", json={"current_password": cur, "new_password": new})
+    assert change("wrong-one", "brandnew123").status_code == 400
+    assert change("demo123", "short").status_code == 400
+    assert change("demo123", "brandnew123").status_code == 200
+    fresh = A.app.test_client()
+    assert fresh.post("/api/login", json={"email": "isha@example.com", "password": "demo123"}).status_code == 401
+    assert fresh.post("/api/login", json={"email": "isha@example.com", "password": "brandnew123"}).status_code == 200
+    assert change("brandnew123", "demo123aa").status_code == 200                     # the new one is the current one now
+    assert A.app.test_client().post("/api/me/password", json={"current_password": "x", "new_password": "yyyyyyyyy"}).status_code == 401
+    A.run("UPDATE employees SET password_hash=? WHERE email='isha@example.com'", (A.generate_password_hash("demo123"),))
+
+
+def test_security_rules():
+    k = login("komal@example.com")
+    assert k.post("/api/attendance/punch", json={"emp_id": 1, "date": "2026-01-01", "status": "P"}).status_code in (404, 405)
+    assert A.app.test_client().post("/api/device/push", json={}).status_code in (404, 405)
+    ids = {p["email"]: p["id"] for p in k.get("/api/people").get_json()}
+    leave = lambda aid: k.post("/api/leave/apply", json={"code": "LOP", "from_date": "2027-05-03", "to_date": "2027-05-03", "reason": "x", "approver_id": aid})
+    assert leave(ids["aarav@example.com"]).status_code == 400 and leave(ids["komal@example.com"]).status_code == 400      # a colleague / oneself cannot approve
+    assert k.post("/api/feed", json={"body": "fake announcement"}).status_code == 403
+    r = k.get("/api/me")
+    assert r.headers["X-Frame-Options"] == "DENY" and r.headers["X-Content-Type-Options"] == "nosniff" and r.headers["Cache-Control"] == "no-store"
+    c = A.app.test_client(); bad = lambda: c.post("/api/login", json={"email": "meera@example.com", "password": "nope"}).status_code
+    assert [bad() for _ in range(8)] == [401] * 8 and bad() == 429
+    assert c.post("/api/login", json={"email": "meera@example.com", "password": "demo123"}).status_code == 429          # locked even with the right one, for a while
+    assert c.post("/api/login", json={"email": "neil@example.com", "password": "demo123"}).status_code == 200          # others are not affected
+    A._FAILS.clear()
+
+
+def test_resignation_notifies_manager_hr_manager_and_leadership():
+    A.run("UPDATE employees SET designation='HR Manager' WHERE email='hr@example.com'")
+    k = login("kabir@example.com")
+    last = A.q("SELECT COALESCE(MAX(id),0) m FROM notifications", one=True)["m"]
+    assert k.post("/api/resignation", json={"last_day": "2027-01-31", "reason": "moving"}).status_code == 200
+    got = {r["email"] for r in A.q("SELECT e.email FROM notifications n JOIN employees e ON e.id=n.emp_id WHERE n.id>? AND n.text LIKE '%resignation%'", (last,))}
+    want = {r["email"] for r in A.q("SELECT email FROM employees WHERE active=1 AND (designation='HR Manager' OR role IN ('ceo','coo','cpo'))")} | {"manager@example.com"}
+    assert got == want and "kabir@example.com" not in got
+    assert A.q("SELECT COUNT(*) c FROM notifications WHERE id>?", (last,), one=True)["c"] == len(want)      # one each
+
+
 def test_designation_master_list():
     c = login("komal@example.com")
     d = c.get("/api/designations").get_json()

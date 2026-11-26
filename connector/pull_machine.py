@@ -4,7 +4,7 @@ The machine must be in Net Mode = LOCAL (Set Comm -> TCP/IP -> Net Mode). It the
 and answers read-only requests; this script only reads (ping, record count, user names, punch records).
 
 Setup:  set PORTAL_URL=https://hr.3wheels.ai   set BIOMETRIC_TOKEN=<same secret as on the portal>   set MACHINE_IP=192.168.1.49
-Run:    python pull_machine.py            (repeats every PULL_EVERY seconds, default 60)
+Run:    python pull_machine.py            (asks for the record count every PULL_EVERY seconds, default 60; downloads only when it changed)
         python pull_machine.py --once     (one pull, then stop)
 
 Wire format (found by testing, matches a public write-up of a related reader):
@@ -18,7 +18,7 @@ Wire format (found by testing, matches a public write-up of a related reader):
 The machine does not say IN or OUT; the portal treats the first punch of a day as in and the last as out.
 """
 import hashlib, json, os, socket, sys, time, urllib.error, urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 _env = os.path.join(HERE, "sync.env")      # KEY=VALUE lines: PORTAL_URL, BIOMETRIC_TOKEN, MACHINE_IP, PULL_FROM, PULL_EVERY (real environment variables win)
@@ -35,6 +35,8 @@ PORTAL = os.environ.get("PORTAL_URL", "https://hr.3wheels.ai").rstrip("/")
 TOKEN = os.environ.get("BIOMETRIC_TOKEN", "")
 EVERY = int(os.environ.get("PULL_EVERY", "60"))
 PULL_FROM = os.environ.get("PULL_FROM", "")        # e.g. 2026-11-01: older punches are not sent to the portal
+FULL_EVERY = int(os.environ.get("FULL_EVERY", "21600"))   # the machine is also read this often when its count did not change
+_last_full, _bad_tries = time.time(), 0
 _tag = hashlib.md5(PORTAL.encode()).hexdigest()[:8]              # state is kept per portal, so a local test never hides punches from the live site
 SENT = os.path.join(HERE, "pulled_sent_%s.txt" % _tag)      # punches that portal already has
 COUNT = os.path.join(HERE, "pulled_count_%s.txt" % _tag)    # record count at the last complete pull
@@ -78,23 +80,49 @@ def decode_record(r):
     return int.from_bytes(r[:4], "little"), datetime(year, month, day, hour, minute, r[7])
 
 
-def read_all_punches():
-    if ask("0180000000000000000000" + "00", want=10)[:2] != b"\xaa\x55":
-        raise RuntimeError("machine did not answer the ping (is Net Mode = Local?)")
-    count = int.from_bytes(ask("01b408000000" + "0000ffff0000", want=10)[4:6], "little")
+def record_count():
+    """How many punches the machine holds. One small request, so it is cheap to ask every minute."""
+    reply = ask("01b408000000" + "0000ffff0000", want=10)
+    if len(reply) < 10 or reply[:2] != b"\xaa\x55":
+        raise RuntimeError("machine did not answer the record count (is Net Mode = Local?)")
+    return int.from_bytes(reply[4:6], "little")
+
+
+def read_block(n, count, blocks):
+    """One request, never repeated: the machine hands out the blocks strictly in order whatever number is asked for,
+    so asking again after a failure returns the NEXT block and shifts all the data after it."""
+    arg = count.to_bytes(2, "little").hex() + "000000" + "04" if n == 0 else "0000" + n.to_bytes(2, "little").hex() + "0004"
+    reply = ask("01a4" + "00000000" + arg, want=1038, wait=4.0)
+    if len(reply) < 1038 or reply[:2] != b"\xaa\x55":
+        raise RuntimeError("block %d of %d came back incomplete (%d bytes)" % (n, blocks, len(reply)))
+    return reply[12:12 + 1024]
+
+
+def read_punches(count):
+    """Reads every record, from block 0 to the end. Any failed block raises, and the next try starts again at block 0.
+    Returns (punches, bad) where bad = records that made no sense and were left out."""
     blocks = (count * 12 + 1023) // 1024
-    data = b""
-    for n in range(blocks):
-        arg = count.to_bytes(2, "little").hex() + "000000" + "04" if n == 0 else "0000" + n.to_bytes(2, "little").hex() + "0004"
-        reply = ask("01a4" + "00000000" + arg if n == 0 else "01a4" + "00000000" + arg, want=1038, wait=4.0)
-        if len(reply) < 1038 or reply[:2] != b"\xaa\x55":
-            raise RuntimeError("block %d of %d came back incomplete (%d bytes)" % (n, blocks, len(reply)))
-        data += reply[12:12 + 1024]
-    out = []
+    data = b"".join(read_block(n, count, blocks) for n in range(blocks))      # the 12 byte records run on across blocks
+    out, bad = [], 0
+    latest = datetime.now() + timedelta(days=1)
     for i in range(count):
-        uid, at = decode_record(data[i * 12:(i + 1) * 12])
+        r = data[i * 12:(i + 1) * 12]
+        try:
+            uid, at = decode_record(r)
+            if r[4:6] != b"\x01\x00" or not 0 < uid < 100000 or not datetime(2020, 1, 1) <= at <= latest:
+                raise ValueError("not a punch record")
+        except (ValueError, IndexError):
+            bad += 1
+            continue
         out.append((uid, at))
-    return count, out
+    return out, bad
+
+
+def read_all_punches():
+    count = record_count()
+    punches, bad = read_punches(count)
+    if bad: raise RuntimeError("%d unreadable record(s), read again" % bad)
+    return count, punches
 
 
 def user_name(uid):
@@ -110,13 +138,32 @@ def post(batch):
     return json.loads(urllib.request.urlopen(req, timeout=60).read())
 
 
+def last_count():
+    try: return int(open(COUNT).read().strip())
+    except (OSError, ValueError): return 0
+
+
 def pull_once():
+    global _last_full, _bad_tries
+    count = record_count()
+    known = last_count()
+    full = not known or count < known or time.time() - _last_full > FULL_EVERY      # a read now and then catches anything missed
+    if count == known and not full:
+        log("machine has %d punches, nothing new" % count)
+        return 0
     seen = set(open(SENT).read().split("\n")) if os.path.exists(SENT) else set()
-    count, punches = read_all_punches()
+    punches, bad = read_punches(count)
+    if full and not bad: _last_full = time.time()
+    done = True
+    if bad:
+        _bad_tries += 1
+        done = _bad_tries >= 10                      # read again next time; a record that stays unreadable is given up on
+        log("%d unreadable record(s) left out%s" % (bad, "" if done else ", will read again"))
+    if done: _bad_tries = 0
     fresh = [(u, t) for u, t in punches if "%d|%s" % (u, t.strftime("%Y%m%d%H%M%S")) not in seen and (not PULL_FROM or t.strftime("%Y-%m-%d") >= PULL_FROM)]
     if not fresh:
-        open(COUNT, "w").write(str(count))
-        log("machine has %d punches, nothing new" % count)
+        if done: open(COUNT, "w").write(str(count))
+        log("machine has %d punches, nothing new%s" % (count, " (full check)" if full else ""))
         return 0
     names = {u: user_name(u) for u in {u for u, _ in fresh}}
     sent = 0
@@ -127,7 +174,7 @@ def pull_once():
             f.write("".join("%d|%s\n" % (u, t.strftime("%Y%m%d%H%M%S")) for u, t in part))
         sent += len(part)
         log("sent %d punch(es) to the portal, %d were new there" % (len(part), res.get("new", 0)))
-    open(COUNT, "w").write(str(count))
+    if done: open(COUNT, "w").write(str(count))
     return sent
 
 

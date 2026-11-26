@@ -4,12 +4,25 @@
 const LEAVE_CATEGORY = { leave: "Leave", rh: "Restricted Holiday", cancel: "Leave Cancel", compoff_grant: "Leave Grant" };
 const GENERAL_DOT = "#d6a9ea", RESTRICTED_DOT = "#e6c232";
 
+function leaveApprovers(info) {
+  const backs = info.backups || [], isHrManager = b => b.designation === "HR Manager", out = [];
+  [...backs.filter(isHrManager), ...["ceo", "coo", "cpo"].flatMap(r => backs.filter(b => b.role === r && !isHrManager(b)))]
+    .forEach(b => out.push({ id: b.id, name: b.name, label: isHrManager(b) ? "HR Manager" : b.role.toUpperCase() }));
+  if (info.manager) {
+    const same = out.find(a => a.id === info.manager.id);          // the manager already is in the list: show once
+    if (same) same.label += " / Manager"; else out.push({ id: info.manager.id, name: info.manager.name, label: "Manager" });
+  }
+  return out;
+}
+
 // ------------------------------------------------------------------ Leave Apply
 P["leave-apply"] = async el => {
   let tab = 0, sub = 0, hideNote = false;
   const [types, bal, hol, info] = await Promise.all([api("leave/types"), api("leave/balances"), api("holidays"), api("approval-info")]);
-  const approvers = approverList(info);
-  const F = { code: "", from: "", fs: "1", to: "", ts: "2", contact: "", reason: "", approver: approvers[0] ? String(approvers[0].id) : "", date: "", cancelId: "" };
+  // "Applying to": HR Manager, CEO, COO, CPO and the Reporting Manager (not every HR / admin account)
+  const approvers = leaveApprovers(info);
+  const firstApprover = info.manager ? String(info.manager.id) : approvers[0] ? String(approvers[0].id) : "";       // goes to the reporting manager unless another is picked
+  const F = { code: "", from: "", fs: "1", to: "", ts: "2", contact: "", reason: "", approver: firstApprover, date: "", cancelId: "" };
   const publicHol = new Set(hol.filter(h => !h.restricted).map(h => h.date));
   const typeName = c => (types.find(t => t.code === c) || {}).name || (c === "RH" ? "Restricted Holiday" : c);
   const balOf = c => { const b = bal.find(x => x.code === c); return b ? b.balance : null; };

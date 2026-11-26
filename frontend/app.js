@@ -533,7 +533,7 @@ const TITLES = { home: "Home", engage: "Engage", kudos: "Kudos", feedback: "Feed
 const ROUTE_ALIAS = { "my-regularizations": "attendance" };
 TITLES["my-regularizations"] = "My Regularizations";
 const CRUMB_COLOR = { home: "#c4b5fd", engage: "#fdba9b", kudos: "#5ed3d1", feedback: "#5ed3d1", tasks: "#86d9a0", review: "#86d9a0", "leave-apply": "#5fd1d8", "leave-balances": "#5fd1d8", "leave-calendar": "#5fd1d8", holidays: "#5fd1d8", attendance: "#c4b5fd", regularization: "#c4b5fd", documents: "#f0a8d8", people: "#c4b5fd" };
-const QUICK_LINKS = [["#/payslips", "Payslips"], ["#/leave-apply", "Apply Leave"], ["#/attendance", "Attendance Info"], ["#/regularization", "Regularization"], ["#/holidays", "Holiday Calendar"], ["#/documents", "Document Center"], ["#/people", "People Directory"], ["#/helpdesk", "Raise a Ticket"]];
+const QUICK_LINKS = [["#/payslips", "Payslips"], ["#/leave-apply", "Apply Leave"], ["#/attendance", "Attendance Info"], ["#/regularization", "Regularization"], ["#/holidays", "Holiday Calendar"], ["#/documents", "Document Center"], ["#/people", "People Directory"], ["#/helpdesk", "Raise a Ticket"], ["#/my-info", "Change Password"]];
 // Pages can replace the header trail, e.g. setCrumb(["Attendance Info", "My Regularizations"])
 function setCrumb(parts) {
   const el = $("#crumb"); if (!el) return;
@@ -544,7 +544,18 @@ P["my-info"] = async el => {
   const m = ME;
   el.innerHTML = `<h1>My Info</h1><div class="card"><div style="display:flex;gap:16px;align-items:center"><span class="avatar big">${esc(m.name[0])}</span><div><h2 style="margin:0">${esc(m.name)}</h2><span class="mute">${esc(m.designation)} · ${esc(m.department)}</span></div></div></div>
   <div class="card grid">${[["Employee ID", m.emp_no], ["Machine ID", m.biometric_id || "-"], ["Email", m.email], ["Location", m.location], ["Joined", fdate(m.join_date)], ["Reports to", m.manager_name || "-"], ["Shift", m.shift], ["Skills", m.skills]].map(([k, v]) => `<div><span class="mute">${esc(k)}</span><div>${esc(v)}</div></div>`).join("")}</div>
+  <div class="card" style="max-width:520px"><h2>Change Password</h2>${form("cp", [{ n: "current_password", label: "Current password", type: "password" }, { n: "new_password", label: "New password (min 8 characters)", type: "password" }, { n: "confirm_password", label: "Type the new password again", type: "password" }], "Change password")}</div>
   <div class="card"><h2>Other</h2><a href="#/resignation">Resignation</a></div>`;
+  const cp = $("#cp");
+  cp.onsubmit = async e => {
+    e.preventDefault();
+    const err = $("#cp-err"), d = Object.fromEntries(new FormData(cp));
+    err.textContent = "";
+    if (!d.current_password || !d.new_password) { err.textContent = "Fill in all three fields."; return; }
+    if (d.new_password !== d.confirm_password) { err.textContent = "The two new passwords do not match."; return; }
+    try { await api("me/password", "POST", { current_password: d.current_password, new_password: d.new_password }); cp.reset(); toast("Password changed. Use the new one next time you sign in."); }
+    catch (er) { err.textContent = er.message; }
+  };
 };
 P.delegates = async el => {
   const draw = async () => {
