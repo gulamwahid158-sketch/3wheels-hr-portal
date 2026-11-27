@@ -1318,6 +1318,12 @@ def a_emp_upd(u, eid):
         nm = str(j["name"] or "").strip()
         if not nm: raise ValueError("Name is required")
         sets.append("name=?"); vals.append(nm)
+    if "email" in j:
+        em = str(j["email"] or "").strip().lower()
+        if em != (e["email"] or "").lower():                   # the login id; unchanged values are ignored
+            if "@" not in em or "." not in em.split("@")[-1]: raise ValueError("Invalid email")
+            if q("SELECT id FROM employees WHERE email=? AND id!=?", (em, eid), one=True): raise ValueError("Email %s is already used by someone else" % em)
+            sets.append("email=?"); vals.append(em)
     if "biometric_id" in j:
         sets.append("biometric_id=?"); vals.append(clean_biometric_id(j["biometric_id"], eid))
     if "join_date" in j and j["join_date"]:

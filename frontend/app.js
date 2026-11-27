@@ -979,7 +979,7 @@ P.admin = async el => {
         { type: "section", label: "Account & Work Details" },
         { n: "emp_no", label: "Employee code", value: ev.emp_no, placeholder: "e.g. 3WAI00001" },
         { n: "name", label: "Full name", value: ev.name },
-        { n: "email", label: "Official work email (read-only)", type: "email", value: ev.email, readonly: true, req: false },
+        { n: "email", label: "Official work email (this is the login id)", type: "email", value: ev.email, req: false },
         { n: "role", label: "Role", type: "select", opts: roleChoices, value: ev.role },
         { n: "department", label: "Department", type: "select", opts: desig.departments.map(d => [d, d]), value: ev.department },
         { n: "designation", label: "Designation (Job Title)", type: "select", groups: desigOptGroups, value: ev.designation },

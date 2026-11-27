@@ -540,6 +540,21 @@ def test_my_team_only_shows_people_below_the_manager():
     assert A.app.test_client().get("/api/team").status_code == 401
 
 
+def test_change_employee_email():
+    ceo = login("ceo@example.com"); hr = login("hr@example.com")
+    komal = next(p for p in ceo.get("/api/admin/employees").get_json() if p["email"] == "komal@example.com")
+    ok = ceo.patch("/api/admin/employees/%d" % komal["id"], json={"email": "Komal.New@Example.com "})
+    assert ok.status_code == 200
+    assert A.app.test_client().post("/api/login", json={"email": "komal.new@example.com", "password": "demo123"}).status_code == 200      # new login id works, stored in lower case
+    assert A.app.test_client().post("/api/login", json={"email": "komal@example.com", "password": "demo123"}).status_code == 401
+    assert ceo.patch("/api/admin/employees/%d" % komal["id"], json={"email": "hr@example.com"}).status_code == 400            # already someone else's
+    assert ceo.patch("/api/admin/employees/%d" % komal["id"], json={"email": "not-an-email"}).status_code == 400
+    assert ceo.patch("/api/admin/employees/%d" % komal["id"], json={"email": "komal.new@example.com", "phone": "1"}).status_code == 200      # same value is ignored
+    ceo_id = next(p["id"] for p in ceo.get("/api/admin/employees").get_json() if p["email"] == "ceo@example.com")
+    assert hr.patch("/api/admin/employees/%d" % ceo_id, json={"email": "boss@example.com"}).status_code == 400                # HR cannot touch leadership
+    assert ceo.patch("/api/admin/employees/%d" % komal["id"], json={"email": "komal@example.com"}).status_code == 200
+
+
 def test_designation_master_list():
     c = login("komal@example.com")
     d = c.get("/api/designations").get_json()
