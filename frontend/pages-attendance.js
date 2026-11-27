@@ -51,6 +51,10 @@ P.attendance = async el => {
   let ym = localYm(), sel = todayIso(), view = "grid";
   const holidays = await api("holidays");
   const holName = Object.fromEntries(holidays.map(h => [h.date, h.name]));
+  // days off known in advance: public holidays and Sundays show on the calendar even before any attendance exists for them
+  const publicHol = new Set(holidays.filter(h => !h.restricted).map(h => h.date));
+  const isOff = iso => publicHol.has(iso) || new Date(iso + "T00:00").getDay() === 0;
+  const isSundayName = n => /^Sunday/.test(n || "");
 
   const draw = async () => {
     const [cur, prev] = await Promise.all([api("attendance?month=" + ym), api("attendance?month=" + addMonths(ym, -1))]);
@@ -64,9 +68,10 @@ P.attendance = async el => {
     const flagged = d => d && d.status === "P" && sh.start != null && d.first_in && timeMins(d.first_in) > sh.start + LATE_GRACE;
 
     const cell = c => {
-      const d = byDate[c.iso], s = d && !c.out ? d.status : "";
-      return `<div class="ac ${c.out ? "out" : ""} ${s ? "s-" + s : ""} ${c.iso === today ? "today" : ""} ${c.iso === sel && !c.out ? "sel" : ""}" data-d="${c.iso}" ${c.out ? "" : 'tabindex="0"'}>
-        <span class="ac-n">${pad2(c.day)}</span>${s === "HD" ? '<b class="ac-st"><i>P</i><i>A</i></b>' : s ? `<b class="ac-st">${esc(s === "L" ? "A" : s)}</b>` : ""}${c.out ? "" : `<small class="ac-sh">${esc(sh.code)}</small>`}${!c.out && flagged(d) ? '<i class="ac-flag" title="Late in"></i>' : ""}</div>`;
+      const d = byDate[c.iso], s = c.out ? "" : d ? d.status : isOff(c.iso) ? "H" : "";
+      const hn = !c.out && holName[c.iso] && !isSundayName(holName[c.iso]) ? holName[c.iso] : "";
+      return `<div title="${esc(hn)}" class="ac ${c.out ? "out" : ""} ${s ? "s-" + s : ""} ${c.iso === today ? "today" : ""} ${c.iso === sel && !c.out ? "sel" : ""}" data-d="${c.iso}" ${c.out ? "" : 'tabindex="0"'}>
+        <span class="ac-n">${pad2(c.day)}</span>${s === "HD" ? '<b class="ac-st"><i>P</i><i>A</i></b>' : s ? `<b class="ac-st">${esc(s === "L" ? "A" : s)}</b>` : ""}${hn ? `<small class="ac-hol">${esc(hn)}${publicHol.has(c.iso) ? "" : " (optional)"}</small>` : ""}${c.out ? "" : `<small class="ac-sh">${esc(sh.code)}</small>`}${!c.out && flagged(d) ? '<i class="ac-flag" title="Late in"></i>' : ""}</div>`;
     };
     const grid = view === "grid"
       ? `<div class="ac-head">${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(x => `<div>${x}</div>`).join("")}</div><div class="ac-grid">${monthGrid(ym).map(cell).join("")}</div>`
@@ -78,7 +83,9 @@ P.attendance = async el => {
     const lateIn = inM != null && sh.start != null && inM > sh.start ? inM - sh.start : null;
     const earlyOut = outM != null && sh.end != null && outM < sh.end ? sh.end - outM : null;
     const brk = total != null && total > 300 ? BREAK_MIN : null;
-    const remark = !r ? "" : r.status === "H" ? (holName[sel] || "Holiday") : (STATUS_NAME[r.status] || "");
+    const offDay = !r && isOff(sel);
+    const remark = offDay ? (holName[sel] || "Weekly Holiday") : !r ? (holName[sel] || "") : r.status === "H" ? (holName[sel] || "Holiday") : (STATUS_NAME[r.status] || "");
+    const coming = holidays.filter(h => h.date >= today && !isSundayName(h.name)).slice(0, 5);
     const s1 = sh.start == null ? null : [sh.start, sh.start + 180], s2 = sh.start == null ? null : [sh.start + 225, sh.end];
     const range = x => x ? `${hhmm(x[0])} - ${hhmm(x[1])}` : "-";
     // a half day shows one session as Present and the other as Half Day (the one the person was not there for)
@@ -103,10 +110,11 @@ P.attendance = async el => {
             <div><b>${sh.start != null ? `${hhmm(sh.start)} ${sh.start < 720 ? "Am" : "Pm"} To ${hhmm(sh.end)} ${sh.end < 720 ? "Am" : "Pm"}` : "Flexible"}</b><small>Attendance Scheme</small></div></div>
           <div class="sd-table"><div class="sd-sub">Processed on</div><div class="tablewrap"><table><thead><tr><th>First In</th><th>Last Out</th><th>Late In</th><th>Early Out</th><th>Total Work Hrs</th><th>Break Hrs</th><th>Actual Work Hrs</th></tr></thead>
             <tbody><tr><td>${r && r.first_in ? esc(r.first_in) : "-"}</td><td>${r && r.last_out ? esc(r.last_out) : "-"}</td><td>${lateIn != null ? hhmm(lateIn) : "-"}</td><td>${earlyOut != null ? hhmm(earlyOut) : "-"}</td><td>${hhmm(total)}</td><td>${brk ? hhmm(brk) : "-"}</td><td>${total != null ? hhmm(total - (brk || 0)) : "-"}</td></tr></tbody></table></div></div>
-          <div class="sd-table"><div class="sd-title">Status Details</div><div class="tablewrap"><table><thead><tr><th>Status</th><th>Remarks</th></tr></thead><tbody><tr><td>${r ? esc(STATUS_NAME[r.status] || r.status) : "-"}</td><td>${remark ? esc(remark) : "-"}</td></tr></tbody></table></div></div>
+          <div class="sd-table"><div class="sd-title">Status Details</div><div class="tablewrap"><table><thead><tr><th>Status</th><th>Remarks</th></tr></thead><tbody><tr><td>${r ? esc(STATUS_NAME[r.status] || r.status) : offDay ? "Holiday" : "-"}</td><td>${remark ? esc(remark) : "-"}</td></tr></tbody></table></div></div>
           <div class="sd-table"><div class="sd-title">Session Details</div><div class="tablewrap"><table><thead><tr><th>Session</th><th>Session Timing</th><th>Status</th><th>First In</th><th>Last Out</th></tr></thead>
             <tbody><tr><td>Session 1</td><td>${range(s1)}</td><td>${esc(sessionStatus(1))}</td><td>${r && r.first_in ? esc(r.first_in) : "-"}</td><td>-</td></tr><tr><td>Session 2</td><td>${range(s2)}</td><td>${esc(sessionStatus(2))}</td><td>-</td><td>${r && r.last_out ? esc(r.last_out) : "-"}</td></tr></tbody></table></div></div>
-        </div></div></div>`;
+        </div></div>
+      <div class="card" style="margin-top:16px"><h2>Upcoming holidays</h2>${table([["Date", h => longDate(h.date)], ["Day", h => weekdayOf(h.date, "long")], ["Holiday", h => h.name], ["Type", h => h.restricted ? "Optional" : "Public"]], coming, "No holidays listed.")}<p><a href="#/holidays">Open Holiday Calendar →</a></p></div></div>`;
 
     $("#to-reg").onclick = () => { location.hash = "#/my-regularizations"; };
     $("#cal-prev").onclick = () => { ym = addMonths(ym, -1); draw(); };

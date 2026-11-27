@@ -784,6 +784,8 @@ button.btn.sec:hover{background:var(--brand-l)}
 
 /* ---- Leave (no punch) / Half Day, and the + to regularize ---- */
 .s-L{background:rgba(229,57,53,.14)}.s-L .ac-st{color:#d32f2f}
+/* the holiday's name inside an attendance calendar day */
+.ac-hol{position:absolute;left:8px;right:8px;top:54px;text-align:center;font-size:11px;line-height:1.1;color:var(--mute);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 /* HR Admin > Employees: a name opens that person's attendance */
 .emp-att{color:inherit;text-decoration:none}.emp-att:hover{text-decoration:underline;color:var(--sky,#2f6fed)}
 /* Half Day: the cell is split down the middle, Present (P) on the left and Leave (L) on the right */
